@@ -19,7 +19,7 @@ const duration = computed(() => {
   if (value < 0.01) return '<0.01 秒'
   return `${value < 1 ? value.toFixed(2) : value.toFixed(1)} 秒`
 })
-function traceTarget(trace) { return trace.metadata?.path || trace.details?.command || trace.command || '' }
+function traceTarget(trace) { const started = trace.events?.find((event) => event.event_type === 'tool.started')?.payload || {}; return trace.metadata?.path || started.path || started.query || trace.details?.command || trace.command || '' }
 function traceDuration(trace) { const value = trace.durationSeconds || 0; return value ? `${value < 1 ? value.toFixed(2) : value.toFixed(1)} 秒` : '' }
 function traceError(trace) { return trace.details?.stderr || trace.summary || trace.output || '' }
 </script>

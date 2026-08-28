@@ -12,6 +12,10 @@ const messagesElement = ref(null)
 const followsLatest = ref(true)
 
 function message(runId, role) { return props.conversations.messages.find((item) => item.run_id === runId && item.role === role) }
+function toolGroups(runId) {
+  if (props.eventStore.runId === runId && props.eventStore.groupedToolTraces?.length) return props.eventStore.groupedToolTraces
+  return props.conversations.toolGroupsByRun?.[runId] || []
+}
 function submit() { const value = task.value.trim(); if (!value) return; followsLatest.value = true; emit('submit', value); task.value = ''; scrollToLatest(true) }
 function trackScroll() { const element = messagesElement.value; if (element) followsLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 80 }
 async function scrollToLatest(force = false) { await nextTick(); const element = messagesElement.value; if (element && (force || followsLatest.value)) element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' }) }
@@ -30,9 +34,9 @@ watch(
       <div v-if="!conversations.currentId" class="agent-intro"><span class="agent-avatar">A</span><div><strong>选择或新建对话</strong><p>每个对话拥有独立上下文，可以连续进行多轮任务。</p></div></div>
       <article v-for="item in conversations.runs" :key="item.id" class="run-turn">
         <div v-if="message(item.id, 'user')" class="message user"><small>你</small><p>{{ message(item.id, 'user').content }}</p></div>
-        <section v-if="eventStore.runId === item.id && eventStore.groupedToolTraces?.length" class="tool-activity-list" aria-label="Agent 执行过程">
-          <p class="process-label">执行过程</p>
-          <ToolActivityLine v-for="group in eventStore.groupedToolTraces" :key="group.name" :group="group" />
+        <section v-if="toolGroups(item.id).length" class="tool-activity-list" aria-label="Agent 运转过程">
+          <p class="process-label">Agent 运转过程</p>
+          <ToolActivityLine v-for="group in toolGroups(item.id)" :key="group.name" :group="group" />
         </section>
         <div class="run-summary" :data-status="item.status">
           <span>{{ item.status === 'completed' ? '任务已完成' : item.status === 'failed' ? '任务失败' : item.status === 'cancelled' ? '任务已停止' : '任务进行中' }}</span><span v-if="item.termination_reason && item.termination_reason !== item.status">{{ item.termination_reason }}</span>

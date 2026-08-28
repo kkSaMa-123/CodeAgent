@@ -114,4 +114,28 @@ describe('Codex 风格项目与对话界面', () => {
     expect(wrapper.text()).toContain('本轮 Diff'); await wrapper.findAll('.view-switch button')[1].trigger('click'); expect(wrapper.text()).toContain('new')
     await wrapper.findAll('.view-switch button')[2].trigger('click'); expect(wrapper.text()).toContain('current')
   })
+
+  it('Diff 明确提示折叠的未修改内容并可进入完整文件', async () => {
+    const wrapper = mount(EditorPanel, { props: {
+      workspace: { currentFile: 'app.cpp', fileContent: { content: 'current' }, fileLoading: false, fileError: '' },
+      diffStore: {
+        diff: '@@ -1,3 +1,4 @@\n old\n+new\n@@ -10,2 +11,3 @@\n tail\n+end',
+        preview: '完整的本轮文件内容', previewKind: 'text', loading: false, error: '',
+        lines: [
+          { id: 0, text: '@@ -1,3 +1,4 @@', kind: 'hunk' },
+          { id: 1, text: ' old', kind: 'context' },
+          { id: 2, text: '+new', kind: 'addition' },
+          { id: 3, text: '@@ -10,2 +11,3 @@', kind: 'hunk' },
+          { id: 4, text: ' tail', kind: 'context' },
+          { id: 5, text: '+end', kind: 'addition' },
+        ],
+      },
+      selectedChange: { path: 'app.cpp', change_type: 'modified', additions: 2, deletions: 0 },
+    } })
+    wrapper.vm.select('diff'); await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('已折叠 6 行未修改内容')
+    expect(wrapper.text()).toContain('Diff 只显示修改位置附近的内容')
+    await wrapper.find('.diff-context-notice button').trigger('click')
+    expect(wrapper.text()).toContain('完整的本轮文件内容')
+  })
 })

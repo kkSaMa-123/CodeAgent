@@ -98,6 +98,10 @@ def test_resource_ownership_history_changes_and_sse(tmp_path: Path) -> None:
         ).json()
         wait(client, run["id"])
         assert client.get(f"/api/runs/{run['id']}/changes").status_code == 200
+        history = client.get(f"/api/runs/{run['id']}/events/history")
+        assert history.status_code == 200
+        assert history.json()[-1]["event_type"] == "task.completed"
+        assert history.json()[-1]["run_id"] == run["id"]
         assert client.get(f"/api/runs/{run['id']}/events").text.count("event: task.completed") == 1
         assert (
             client.get(

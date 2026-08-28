@@ -157,10 +157,11 @@ class AgentRuntime:
                     return
 
                 started_payload = {"tool_call_id": call.id, "name": call.name}
-                if call.name == "run_command" and call.arguments:
-                    command = call.arguments.get("command")
-                    if isinstance(command, str):
-                        started_payload["command"] = truncate_text(command, 2_000)
+                if call.arguments:
+                    for key in ("path", "query", "command"):
+                        value = call.arguments.get(key)
+                        if isinstance(value, str):
+                            started_payload[key] = truncate_text(value, 2_000)
                 state.publish("tool.started", started_payload)
                 if repeat_decision is RepetitionDecision.WARN:
                     result = ToolExecutionResult.error(

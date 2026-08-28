@@ -130,10 +130,15 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .changed-files button { padding: 5px 8px; border-radius: 5px; color: #9fb3ba; background: #152328; font: 10px/1 ui-monospace, monospace; white-space: nowrap; }
 .changed-files button:hover { color: var(--accent-strong); }
 .diff-view { min-width: fit-content; min-height: 100%; margin: 0; padding: 12px 0 40px; overflow: auto; color: #b8c8cd; font: 11px/1.6 "SFMono-Regular", Consolas, monospace; }
+.diff-content { min-height: 0; height: 100%; display: flex; flex-direction: column; }
+.diff-context-notice { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--border); color: #71878e; background: #0c171a; font-size: 10px; }
+.diff-context-notice button { padding: 4px 7px; border: 1px solid #31554e; border-radius: 5px; color: #83c8b2; background: #10231f; font-size: 10px; white-space: nowrap; }
+.diff-context-notice button:hover { color: #b5f0dc; border-color: #43806f; }
 .diff-line { display: block; min-height: 18px; padding: 0 14px; white-space: pre; }
 .diff-line.addition { color: #a5e8c5; background: rgb(33 103 72 / 24%); }
 .diff-line.deletion { color: #ffb1aa; background: rgb(119 48 48 / 24%); }
 .diff-line.hunk { color: #91c8e8; background: rgb(37 78 104 / 22%); }
+.diff-line.collapsed { color: #60777f; background: rgb(28 48 55 / 30%); font-style: italic; }
 .diff-line.meta { color: #d2bb79; }
 
 .status-badge { padding: 4px 7px; border: 1px solid #34484e; border-radius: 99px; color: #9aafb6; background: #111e22; font: 9px/1 ui-monospace, monospace; text-transform: uppercase; }

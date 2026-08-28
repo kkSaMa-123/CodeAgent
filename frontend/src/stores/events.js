@@ -10,6 +10,51 @@ export const EVENT_TYPES = [
 
 export const TERMINAL_EVENT_TYPES = new Set(['task.completed', 'task.failed', 'task.cancelled'])
 export const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled'])
+const TOOL_ACTIONS = { list_files: '查看项目文件', read_file: '读取文件', search_text: '搜索代码', write_file: '写入文件', replace_in_file: '修改文件', git_diff: '查看代码变更', run_command: '运行命令' }
+
+export function buildToolTraces(events = []) {
+  const calls = new Map()
+  for (const event of events) {
+    if (!event.event_type.startsWith('tool.')) continue
+    const id = event.payload?.tool_call_id
+    if (!id) continue
+    const current = calls.get(id) || { id, name: event.payload.name || 'tool', status: 'running', events: [] }
+    current.name = event.payload.name || current.name
+    current.events.push(event)
+    if (event.payload.command) current.command = event.payload.command
+    if (event.event_type === 'tool.completed') {
+      current.status = event.payload.status || 'completed'
+      current.summary = event.payload.summary || ''
+      current.errorType = event.payload.error_type || ''
+      current.output = event.payload.output || ''
+      current.metadata = event.payload.metadata || {}
+      current.details = event.payload.details || {}
+      current.modifiedFiles = event.payload.modified_files || []
+    }
+    if (event.event_type === 'tool.repeated') current.status = event.payload.action === 'stop' ? 'failed' : 'warning'
+    calls.set(id, current)
+  }
+  return [...calls.values()]
+}
+
+export function groupToolEvents(events = []) {
+  const groups = new Map()
+  for (const trace of buildToolTraces(events)) {
+    const started = trace.events.find((event) => event.event_type === 'tool.started')
+    const completed = trace.events.find((event) => event.event_type === 'tool.completed')
+    const measured = started && completed ? Math.max(0, (Date.parse(completed.timestamp) - Date.parse(started.timestamp)) / 1000) : 0
+    const duration = Number(trace.metadata?.duration_seconds ?? measured) || 0
+    const group = groups.get(trace.name) || { name: trace.name, traces: [], count: 0, successCount: 0, errorCount: 0, durationSeconds: 0, status: 'success' }
+    group.traces.push({ ...trace, durationSeconds: duration })
+    group.count += 1
+    group.durationSeconds += duration
+    if (trace.status === 'success') group.successCount += 1
+    else if (trace.status === 'running') group.status = 'running'
+    else { group.errorCount += 1; if (group.status !== 'running') group.status = 'error' }
+    groups.set(trace.name, group)
+  }
+  return [...groups.values()]
+}
 
 export const useEventStore = defineStore('events', {
   state: () => ({
@@ -18,59 +63,19 @@ export const useEventStore = defineStore('events', {
     terminalReached: false,
   }),
   getters: {
-    toolTraces(state) {
-      const calls = new Map()
-      for (const event of state.events) {
-        if (!event.event_type.startsWith('tool.')) continue
-        const id = event.payload?.tool_call_id
-        if (!id) continue
-        const current = calls.get(id) || { id, name: event.payload.name || 'tool', status: 'running', events: [] }
-        current.name = event.payload.name || current.name
-        current.events.push(event)
-        if (event.payload.command) current.command = event.payload.command
-        if (event.event_type === 'tool.completed') {
-          current.status = event.payload.status || 'completed'
-          current.summary = event.payload.summary || ''
-          current.errorType = event.payload.error_type || ''
-          current.output = event.payload.output || ''
-          current.metadata = event.payload.metadata || {}
-          current.details = event.payload.details || {}
-          current.modifiedFiles = event.payload.modified_files || []
-        }
-        if (event.event_type === 'tool.repeated') current.status = event.payload.action === 'stop' ? 'failed' : 'warning'
-        calls.set(id, current)
-      }
-      return [...calls.values()]
-    },
+    toolTraces: (state) => buildToolTraces(state.events),
     activity(state) {
       if (state.connectionStatus === 'reconnecting') return { phase: 'reconnecting', label: '实时连接中断，正在恢复…', detail: 'Agent 仍可能在后端继续运行。' }
       const event = state.events.at(-1)
       if (!event) return { phase: 'thinking', label: 'Agent 正在分析任务…', detail: '' }
-      if (event.event_type === 'tool.started') return { phase: 'tool', label: `正在执行工具：${event.payload?.name || 'tool'}`, detail: event.payload?.command || '' }
+      if (event.event_type === 'tool.started') return { phase: 'tool', label: `正在${TOOL_ACTIONS[event.payload?.name] || `调用 ${event.payload?.name || '工具'}`}…`, detail: event.payload?.path || event.payload?.query || event.payload?.command || '' }
       if (event.event_type === 'tool.completed' || event.event_type === 'tool.repeated') return { phase: 'thinking', label: 'Agent 正在分析工具结果…', detail: '' }
       if (event.event_type === 'model.started') return { phase: 'thinking', label: 'Agent 正在分析任务…', detail: `第 ${event.payload?.iteration || 1} 轮` }
       if (event.event_type === 'model.completed') return { phase: 'planning', label: 'Agent 正在准备下一步操作…', detail: '' }
       if (event.event_type === 'approval.requested') return { phase: 'approval', label: '等待你确认命令', detail: '' }
       return { phase: 'preparing', label: '正在准备任务…', detail: '' }
     },
-    groupedToolTraces() {
-      const groups = new Map()
-      for (const trace of this.toolTraces) {
-        const started = trace.events.find((event) => event.event_type === 'tool.started')
-        const completed = trace.events.find((event) => event.event_type === 'tool.completed')
-        const measured = started && completed ? Math.max(0, (Date.parse(completed.timestamp) - Date.parse(started.timestamp)) / 1000) : 0
-        const duration = Number(trace.metadata?.duration_seconds ?? measured) || 0
-        const group = groups.get(trace.name) || { name: trace.name, traces: [], count: 0, successCount: 0, errorCount: 0, durationSeconds: 0, status: 'success' }
-        group.traces.push({ ...trace, durationSeconds: duration })
-        group.count += 1
-        group.durationSeconds += duration
-        if (trace.status === 'success') group.successCount += 1
-        else if (trace.status === 'running') group.status = 'running'
-        else { group.errorCount += 1; if (group.status !== 'running') group.status = 'error' }
-        groups.set(trace.name, group)
-      }
-      return [...groups.values()]
-    },
+    groupedToolTraces: (state) => groupToolEvents(state.events),
   },
   actions: {
     reset(runId) {

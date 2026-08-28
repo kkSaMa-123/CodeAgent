@@ -65,6 +65,7 @@ export class ApiClient {
   getRuns(id) { return this.request(`/api/conversations/${id}/runs`) }
   runTask(id, task) { return this.request(`/api/conversations/${id}/runs`, { method: 'POST', body: JSON.stringify({ task }) }) }
   getRun(id) { return this.request(`/api/runs/${id}`) }
+  getRunEvents(id) { return this.request(`/api/runs/${id}/events/history`) }
   cancelRun(id) { return this.request(`/api/runs/${id}/cancel`, { method: 'POST' }) }
   getFileTree(id, path = '.', depth = 8) {
     const query = new URLSearchParams({ path, depth: String(depth) })

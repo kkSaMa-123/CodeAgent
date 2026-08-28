@@ -22,9 +22,15 @@ describe('项目、对话与运行 Store', () => {
       getMessages: vi.fn().mockResolvedValue([{ run_id: 'r1', role: 'user', content: '第一轮' }]),
       getRuns: vi.fn().mockResolvedValue([{ id: 'r1', status: 'completed' }]),
       getChanges: vi.fn().mockResolvedValue([{ id: 'f1', path: 'app.py' }]),
+      getRunEvents: vi.fn().mockResolvedValue([
+        { sequence: 1, timestamp: '2026-01-01T00:00:00Z', event_type: 'tool.started', payload: { tool_call_id: 't1', name: 'read_file', path: 'app.py' } },
+        { sequence: 2, timestamp: '2026-01-01T00:00:00.1Z', event_type: 'tool.completed', payload: { tool_call_id: 't1', name: 'read_file', status: 'success' } },
+      ]),
     }
     await store.load('p1', client); await store.select('c1', client)
     expect(store.messages[0].content).toBe('第一轮'); expect(store.changesByRun.r1[0].path).toBe('app.py')
+    expect(store.toolGroupsByRun.r1[0].name).toBe('read_file')
+    expect(store.toolGroupsByRun.r1[0].count).toBe(1)
   })
 
   it('同一对话活动运行时拒绝前端重复提交并隔离晚到事件', async () => {

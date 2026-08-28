@@ -491,4 +491,14 @@ def create_app(
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    @app.get("/api/runs/{run_id}/events/history")
+    async def run_event_history(run_id: str) -> list[dict[str, Any]]:
+        try:
+            return [
+                {"run_id": run_id, **event}
+                for event in container.repository.list_events(run_id)
+            ]
+        except NotFoundError as exc:
+            raise _repo_http_error(exc) from exc
+
     return app
