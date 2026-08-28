@@ -45,4 +45,3 @@ class WorkspaceFileService:
         if not path.is_file():
             raise IsADirectoryError("文件预览目标不是普通文件")
         return read_utf8_text(path)
-

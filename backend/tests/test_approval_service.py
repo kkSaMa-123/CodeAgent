@@ -107,4 +107,3 @@ def test_expired_approval_cannot_be_consumed(tmp_path: Path) -> None:
         assert (await service.get(approval.approval_id)).status is ApprovalStatus.EXPIRED
 
     asyncio.run(scenario())
-

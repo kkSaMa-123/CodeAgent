@@ -107,4 +107,3 @@ def test_workspace_change_allows_same_read_again(tmp_path: Path) -> None:
     assert state.status is SessionStatus.COMPLETED
     assert state.workspace_version == 1
     assert reads == 2
-

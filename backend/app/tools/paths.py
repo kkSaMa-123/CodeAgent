@@ -27,9 +27,7 @@ class WorkspaceError(ValueError):
 def _reject_nul(value: str, *, workspace: bool = False) -> None:
     if "\x00" in value:
         code = (
-            WorkspaceErrorCode.INVALID_WORKSPACE
-            if workspace
-            else WorkspaceErrorCode.INVALID_PATH
+            WorkspaceErrorCode.INVALID_WORKSPACE if workspace else WorkspaceErrorCode.INVALID_PATH
         )
         raise WorkspaceError(code, "路径不能包含 NUL 字符")
 

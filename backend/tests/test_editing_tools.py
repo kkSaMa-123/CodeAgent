@@ -129,4 +129,3 @@ def test_atomic_replace_failure_keeps_original_and_becomes_tool_error(
     assert result.error_type == "internal_tool_error"
     assert path.read_text() == "original\n"
     assert not list(tmp_path.glob(".main.txt.*.tmp"))
-

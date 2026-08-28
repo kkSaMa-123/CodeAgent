@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable
 from dataclasses import dataclass, replace
 from typing import TypeVar
@@ -21,6 +22,7 @@ class RuntimeLimits:
     max_iterations: int = 20
     task_timeout_seconds: float = 300.0
     max_tool_output_chars: int = 20_000
+    max_event_output_chars: int = 8_000
     context_budget_chars: int = 120_000
     repeat_warning_threshold: int = 3
     repeat_stop_threshold: int = 5
@@ -32,6 +34,8 @@ class RuntimeLimits:
             raise ValueError("task_timeout_seconds must be positive")
         if self.max_tool_output_chars <= 0:
             raise ValueError("max_tool_output_chars must be positive")
+        if self.max_event_output_chars <= 0:
+            raise ValueError("max_event_output_chars must be positive")
         if self.context_budget_chars <= 0:
             raise ValueError("context_budget_chars must be positive")
         if self.repeat_warning_threshold < 2:
@@ -152,7 +156,12 @@ class AgentRuntime:
                     )
                     return
 
-                state.publish("tool.started", {"tool_call_id": call.id, "name": call.name})
+                started_payload = {"tool_call_id": call.id, "name": call.name}
+                if call.name == "run_command" and call.arguments:
+                    command = call.arguments.get("command")
+                    if isinstance(command, str):
+                        started_payload["command"] = truncate_text(command, 2_000)
+                state.publish("tool.started", started_payload)
                 if repeat_decision is RepetitionDecision.WARN:
                     result = ToolExecutionResult.error(
                         "相同工具和参数已在未变化的工作区上连续调用，"
@@ -183,12 +192,44 @@ class AgentRuntime:
                 state.modified_files.update(result.modified_files)
                 if result.workspace_changed:
                     state.workspace_version += 1
+                details: dict[str, object] = {}
+                if call.name == "run_command" and result.output:
+                    try:
+                        parsed_output = json.loads(result.output)
+                    except (json.JSONDecodeError, TypeError):
+                        parsed_output = None
+                    if isinstance(parsed_output, dict):
+                        for key in (
+                            "command",
+                            "exit_code",
+                            "stdout",
+                            "stderr",
+                            "duration_seconds",
+                            "timed_out",
+                            "cancelled",
+                        ):
+                            value = parsed_output.get(key)
+                            if isinstance(value, str):
+                                limit = 2_000 if key == "command" else 3_000
+                                details[key] = truncate_text(value, limit)
+                            elif value is not None:
+                                details[key] = value
                 state.publish(
                     "tool.completed",
                     {
                         "tool_call_id": call.id,
                         "name": call.name,
                         "status": result.status,
+                        "summary": result.summary,
+                        "error_type": result.error_type,
+                        "output": truncate_text(
+                            result.output,
+                            self._limits.max_event_output_chars,
+                        ),
+                        "metadata": dict(result.metadata),
+                        "details": details,
+                        "modified_files": list(result.modified_files),
+                        "workspace_changed": result.workspace_changed,
                     },
                 )
 

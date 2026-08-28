@@ -112,9 +112,7 @@ def test_invalid_tool_arguments_are_recoverable(
     raw_arguments: str,
 ) -> None:
     settings = make_settings(monkeypatch)
-    response = make_response(
-        tool_calls=[make_tool_call("call-1", "read_file", raw_arguments)]
-    )
+    response = make_response(tool_calls=[make_tool_call("call-1", "read_file", raw_arguments)])
     client, _ = make_client(response)
     provider = OpenAICompatibleProvider(settings, client=client)
 

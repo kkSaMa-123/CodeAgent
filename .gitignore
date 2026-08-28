@@ -30,6 +30,8 @@ runtime/
 *.db
 *.sqlite
 *.sqlite3
+*-wal
+*-shm
 agent_trace*.json
 
 # Local agent and OpenSpec planning files

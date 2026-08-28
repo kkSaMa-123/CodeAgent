@@ -61,4 +61,3 @@ class RepetitionGuard:
         if self._consecutive_count >= self.warning_threshold:
             return RepetitionDecision.WARN
         return RepetitionDecision.ALLOW
-

@@ -31,4 +31,3 @@ class FakeProvider:
     @property
     def remaining(self) -> int:
         return len(self._responses)
-

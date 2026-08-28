@@ -75,4 +75,3 @@ def test_nonexistent_child_is_allowed_only_when_requested(tmp_path: Path) -> Non
     assert resolve_workspace_path(tmp_path, "new/file.txt", must_exist=False) == (
         tmp_path / "new/file.txt"
     )
-

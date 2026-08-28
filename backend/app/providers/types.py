@@ -77,4 +77,3 @@ class AssistantTurn:
             tool_calls=self.tool_calls,
             provider_fields=self.provider_fields,
         )
-

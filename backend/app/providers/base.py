@@ -19,4 +19,3 @@ class ModelProvider(Protocol):
     ) -> AssistantTurn:
         """根据上下文返回一次标准化 Assistant 响应。"""
         ...
-

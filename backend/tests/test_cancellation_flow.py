@@ -96,4 +96,3 @@ def test_cancel_running_command_prevents_delayed_side_effect(tmp_path: Path) -> 
     assert state.status is SessionStatus.CANCELLED
     assert state.termination_reason is TerminationReason.CANCELLED
     assert not marker.exists()
-

@@ -80,4 +80,3 @@ def test_internal_exception_log_is_redacted(
     assert result.error_type == "internal_tool_error"
     assert SECRET not in caplog.text
     assert REDACTED in caplog.text
-

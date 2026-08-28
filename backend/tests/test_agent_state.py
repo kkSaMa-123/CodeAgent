@@ -41,11 +41,17 @@ def test_legal_state_transitions(
     state = make_state()
 
     for status in path:
-        state.transition(status, reason=reason if status in {
-            SessionStatus.COMPLETED,
-            SessionStatus.FAILED,
-            SessionStatus.CANCELLED,
-        } else None)
+        state.transition(
+            status,
+            reason=reason
+            if status
+            in {
+                SessionStatus.COMPLETED,
+                SessionStatus.FAILED,
+                SessionStatus.CANCELLED,
+            }
+            else None,
+        )
 
     assert state.status is path[-1]
     assert state.termination_reason is reason
@@ -76,9 +82,10 @@ def test_terminal_transition_emits_exactly_one_terminal_event() -> None:
     assert terminal_events[0].session_id == state.session_id
     with pytest.raises(InvalidStateTransition):
         state.transition(SessionStatus.FAILED, reason=TerminationReason.INTERNAL_ERROR)
-    assert len(
-        [event for event in state.events.snapshot() if event.event_type.startswith("task.")]
-    ) == 1
+    assert (
+        len([event for event in state.events.snapshot() if event.event_type.startswith("task.")])
+        == 1
+    )
 
 
 def test_event_buffer_is_bounded_but_sequences_remain_monotonic() -> None:

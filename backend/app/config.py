@@ -11,6 +11,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
+DEFAULT_DATA_DIR = PROJECT_ROOT / "runtime"
+
+
+def database_path() -> Path:
+    """数据库路径只来自本地运行配置，默认目录不会进入 Git。"""
+
+    import os
+
+    return Path(os.environ.get("CODEAGENT_DATABASE_PATH", DEFAULT_DATA_DIR / "codeagent.sqlite3"))
 
 
 class ModelSettings(BaseSettings):

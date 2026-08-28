@@ -123,4 +123,3 @@ class ListFilesTool:
             output=json.dumps(payload, ensure_ascii=False, sort_keys=True),
             metadata={"count": len(entries), "truncated": truncated},
         )
-

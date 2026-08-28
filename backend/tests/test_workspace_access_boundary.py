@@ -87,8 +87,7 @@ def test_tools_and_file_service_both_reject_symlink_escape(tmp_path: Path) -> No
 
 def test_default_registry_contains_every_local_tool() -> None:
     names = {
-        definition["function"]["name"]
-        for definition in build_file_tool_registry().definitions
+        definition["function"]["name"] for definition in build_file_tool_registry().definitions
     }
 
     assert names == {

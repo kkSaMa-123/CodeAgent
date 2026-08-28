@@ -200,4 +200,3 @@ class OpenAICompatibleProvider:
             kind = ProviderErrorKind.UNAVAILABLE if retryable else ProviderErrorKind.INVALID_REQUEST
             return ProviderError(kind, message, retryable=retryable, status_code=int(status_code))
         return ProviderError(ProviderErrorKind.UNKNOWN, message, retryable=False)
-

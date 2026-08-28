@@ -119,3 +119,49 @@ class ContextWindow:
     ) -> tuple[ChatMessage, ...]:
         return tuple(message for index in indexes for message in groups[index])
 
+
+@dataclass(frozen=True, slots=True)
+class ConversationContext:
+    """从持久化语义消息生成首目标、旧摘要和最近轮次。"""
+
+    budget_chars: int = 60_000
+
+    def build(self, history: Sequence[dict[str, str]]) -> tuple[ChatMessage, ...]:
+        semantic = []
+        for item in history:
+            if item.get("role") == "user":
+                semantic.append(ChatMessage.user(item["content"]))
+            elif item.get("role") == "assistant":
+                semantic.append(ChatMessage(role="assistant", content=item["content"]))
+        if estimate_context_chars(semantic) <= self.budget_chars:
+            return tuple(semantic)
+        if not semantic:
+            return ()
+        first_user = next((message for message in semantic if message.role == "user"), semantic[0])
+        recent: list[ChatMessage] = []
+        used = estimate_message_chars(first_user)
+        recent_budget = max(1, int(self.budget_chars * 0.65))
+        for message in reversed(semantic):
+            size = estimate_message_chars(message)
+            if used + size > recent_budget:
+                break
+            recent.append(message)
+            used += size
+        recent.reverse()
+        recent_ids = {id(message) for message in recent}
+        older = [
+            message
+            for message in semantic
+            if message is not first_user and id(message) not in recent_ids
+        ]
+        summary_lines = [
+            f"- {message.role}: {truncate_text(message.content or '', 240)}" for message in older
+        ]
+        summary = truncate_text(
+            "较早对话摘要：\n" + "\n".join(summary_lines), max(1, self.budget_chars - used)
+        )
+        result = [first_user]
+        if older:
+            result.append(ChatMessage.system(summary))
+        result.extend(message for message in recent if message is not first_user)
+        return tuple(result)

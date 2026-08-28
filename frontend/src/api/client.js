@@ -48,34 +48,47 @@ export class ApiClient {
   validateWorkspace(path) {
     return this.request('/api/workspaces/validate', { method: 'POST', body: JSON.stringify({ path }) })
   }
-  createSession(workspace) {
-    return this.request('/api/sessions', { method: 'POST', body: JSON.stringify({ workspace }) })
+  listProjects() { return this.request('/api/projects') }
+  createProject(workspace, name) {
+    return this.request('/api/projects', { method: 'POST', body: JSON.stringify({ workspace, name: name || null }) })
   }
-  getSession(id) { return this.request(`/api/sessions/${id}`) }
-  runTask(id, task) {
-    return this.request(`/api/sessions/${id}/tasks`, { method: 'POST', body: JSON.stringify({ task }) })
+  getProject(id) { return this.request(`/api/projects/${id}`) }
+  renameProject(id, name) { return this.request(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }) }
+  removeProject(id) { return this.request(`/api/projects/${id}`, { method: 'DELETE' }) }
+  listConversations(projectId) { return this.request(`/api/projects/${projectId}/conversations`) }
+  createConversation(projectId, title = '新对话') {
+    return this.request(`/api/projects/${projectId}/conversations`, { method: 'POST', body: JSON.stringify({ title }) })
   }
-  cancelSession(id) { return this.request(`/api/sessions/${id}/cancel`, { method: 'POST' }) }
+  renameConversation(id, title) { return this.request(`/api/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }) }
+  deleteConversation(id) { return this.request(`/api/conversations/${id}`, { method: 'DELETE' }) }
+  getMessages(id) { return this.request(`/api/conversations/${id}/messages`) }
+  getRuns(id) { return this.request(`/api/conversations/${id}/runs`) }
+  runTask(id, task) { return this.request(`/api/conversations/${id}/runs`, { method: 'POST', body: JSON.stringify({ task }) }) }
+  getRun(id) { return this.request(`/api/runs/${id}`) }
+  cancelRun(id) { return this.request(`/api/runs/${id}/cancel`, { method: 'POST' }) }
   getFileTree(id, path = '.', depth = 8) {
     const query = new URLSearchParams({ path, depth: String(depth) })
-    return this.request(`/api/sessions/${id}/files/tree?${query}`)
+    return this.request(`/api/projects/${id}/files/tree?${query}`)
   }
   getFileContent(id, path) {
     const query = new URLSearchParams({ path })
-    return this.request(`/api/sessions/${id}/files/content?${query}`)
+    return this.request(`/api/projects/${id}/files/content?${query}`)
   }
   getDiff(id, path = '.') {
     const query = new URLSearchParams({ path })
-    return this.request(`/api/sessions/${id}/diff?${query}`)
+    return this.request(`/api/runs/${id}/diff?${query}`)
   }
+  getChanges(id) { return this.request(`/api/runs/${id}/changes`) }
+  getChange(id, changeId) { return this.request(`/api/runs/${id}/changes/${changeId}`) }
+  getChangePreview(id, changeId) { return this.request(`/api/runs/${id}/changes/${changeId}/preview`) }
   resolveApproval(id, approvalId, approved) {
-    return this.request(`/api/sessions/${id}/approvals/${approvalId}`, {
+    return this.request(`/api/runs/${id}/approvals/${approvalId}`, {
       method: 'POST', body: JSON.stringify({ approved }),
     })
   }
   eventUrl(id, lastSequence = 0) {
     const query = new URLSearchParams({ last_event_id: String(lastSequence) })
-    return `${this.baseUrl}/api/sessions/${id}/events?${query}`
+    return `${this.baseUrl}/api/runs/${id}/events?${query}`
   }
 }
 

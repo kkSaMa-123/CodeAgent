@@ -58,8 +58,7 @@ def _process_exists(pid: int) -> bool:
 def test_timeout_kills_child_process_group(tmp_path: Path) -> None:
     pid_file = tmp_path / "child.pid"
     child_code = (
-        f"import os,time; open({str(pid_file)!r},'w').write(str(os.getpid())); "
-        "time.sleep(60)"
+        f"import os,time; open({str(pid_file)!r},'w').write(str(os.getpid())); time.sleep(60)"
     )
     parent_code = (
         "import subprocess,sys,time; "

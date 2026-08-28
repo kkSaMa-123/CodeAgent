@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -34,6 +34,7 @@ class TerminationReason(StrEnum):
     APPROVAL_DENIED = "approval_denied"
     PROVIDER_ERROR = "provider_error"
     INTERNAL_ERROR = "internal_error"
+    SERVER_RESTARTED = "server_restarted"
 
 
 TERMINAL_STATUSES = frozenset(
@@ -89,6 +90,7 @@ class EventBuffer:
         *,
         session_id: str | None = None,
         redactor: SecretRedactor | None = None,
+        on_publish: Callable[[AgentEvent], None] | None = None,
     ) -> None:
         if capacity <= 0:
             raise ValueError("event buffer capacity must be positive")
@@ -96,6 +98,7 @@ class EventBuffer:
         self._next_sequence = 1
         self._session_id = session_id
         self._redactor = redactor or SecretRedactor()
+        self._on_publish = on_publish
 
     def bind(self, session_id: str) -> None:
         if self._session_id is not None and self._session_id != session_id:
@@ -124,6 +127,8 @@ class EventBuffer:
         )
         self._next_sequence += 1
         self._events.append(event)
+        if self._on_publish is not None:
+            self._on_publish(event)
         return event
 
     def snapshot(self) -> tuple[AgentEvent, ...]:
@@ -134,9 +139,11 @@ class EventBuffer:
 
 
 @dataclass(slots=True)
-class SessionState:
+class RunState:
     session_id: str
     workspace: Path
+    project_id: str | None = None
+    conversation_id: str | None = None
     status: SessionStatus = SessionStatus.QUEUED
     messages: list[ChatMessage] = field(default_factory=list)
     events: EventBuffer = field(default_factory=EventBuffer)
@@ -195,3 +202,11 @@ class SessionState:
                 {"reason": reason.value if reason is not None else None},
             )
             self._terminal_event_emitted = True
+
+    @property
+    def run_id(self) -> str:
+        return self.session_id
+
+
+# 运行时内部逐步迁移时保留导入兼容；HTTP 层不再暴露 Session 资源。
+SessionState = RunState

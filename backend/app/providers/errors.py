@@ -42,4 +42,3 @@ class RetryEvent:
     max_retries: int
     error_kind: ProviderErrorKind
     delay_seconds: float
-

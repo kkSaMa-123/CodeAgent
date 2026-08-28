@@ -1,70 +1,88 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import AppHeader from './components/AppHeader.vue'
-import ApprovalDialog from './components/ApprovalDialog.vue'
 import ChatPanel from './components/ChatPanel.vue'
 import EditorPanel from './components/EditorPanel.vue'
-import WorkspacePanel from './components/WorkspacePanel.vue'
-import { useConfigStore } from './stores/config'
-import { apiClient } from './api/client'
+import ProjectSidebar from './components/ProjectSidebar.vue'
 import { useApprovalStore } from './stores/approval'
+import { useConfigStore } from './stores/config'
+import { useConversationStore } from './stores/conversations'
 import { useDiffStore } from './stores/diff'
-import { useEventStore } from './stores/events'
-import { useSessionStore } from './stores/session'
+import { useEventStore, TERMINAL_EVENT_TYPES } from './stores/events'
+import { useProjectStore } from './stores/projects'
+import { useRunStore } from './stores/runs'
 import { useWorkspaceStore } from './stores/workspace'
 
-const config = useConfigStore()
-const workspace = useWorkspaceStore()
-const session = useSessionStore()
-const events = useEventStore()
-const diff = useDiffStore()
-const approval = useApprovalStore()
-const activePanel = ref('workspace')
+const route = useRoute(); const router = useRouter()
+const config = useConfigStore(); const projects = useProjectStore(); const conversations = useConversationStore(); const run = useRunStore(); const events = useEventStore(); const workspace = useWorkspaceStore(); const diff = useDiffStore(); const approval = useApprovalStore()
+const editor = ref(null); const selectedChange = ref(null); const activePanel = ref('chat')
 
-onMounted(() => config.load())
-onBeforeUnmount(() => { session.stopPolling(); events.disconnect() })
+onMounted(initialize)
+onBeforeUnmount(() => events.disconnect())
 
-async function refreshSnapshot() {
-  if (!session.sessionId) return
-  try {
-    const snapshot = await apiClient.getSession(session.sessionId)
-    session.applySnapshot(snapshot)
-    approval.syncFromSnapshot(snapshot)
-  } catch (error) { session.error = error.message }
+async function initialize() {
+  await Promise.all([config.load(), projects.load()])
+  const requested = route.params.projectId
+  const project = projects.items.find((item) => item.id === requested) || projects.items[0]
+  if (!project) { await router.replace('/projects'); return }
+  await selectProject(project.id, route.params.conversationId)
+}
+
+async function selectProject(projectId, requestedConversation = '') {
+  events.reset(''); run.reset(); diff.reset(); approval.pending = null; selectedChange.value = null
+  projects.select(projectId)
+  await Promise.all([conversations.load(projectId), workspace.loadTree(projectId)])
+  const conversation = conversations.items.find((item) => item.id === requestedConversation) || conversations.items[0]
+  if (conversation) await selectConversation(conversation.id)
+  else await router.push(`/projects/${projectId}`)
+}
+
+async function selectConversation(conversationId) {
+  events.reset(''); run.reset(); diff.reset(); approval.pending = null; selectedChange.value = null
+  if (!await conversations.select(conversationId)) return
+  await router.push(`/projects/${projects.currentId}/conversations/${conversationId}`)
+  const latest = conversations.runs.at(-1)
+  if (latest) { run.apply(latest); connectRun(latest.id) }
+}
+
+function connectRun(runId) {
+  events.connect(runId, { onEvent: handleEvent })
+}
+
+async function submit(task) {
+  const created = await run.submit(conversations.currentId, task)
+  if (!created) return
+  await conversations.refresh()
+  connectRun(created.id)
 }
 
 async function handleEvent(event) {
-  session.applyEvent(event)
-  approval.handleEvent(event)
-  if (event.event_type === 'approval.requested' || event.event_type.startsWith('task.')) await refreshSnapshot()
-  if (event.event_type === 'tool.completed' || event.event_type.startsWith('task.')) {
-    await Promise.all([diff.load(session.sessionId), workspace.loadTree(session.sessionId)])
+  run.applyEvent(event); approval.handleEvent(event)
+  if (event.event_type === 'approval.requested') return
+  if (TERMINAL_EVENT_TYPES.has(event.event_type)) {
+    await run.refresh(); await conversations.refresh(); await workspace.loadTree(projects.currentId)
   }
 }
 
-async function openWorkspace(path) {
-  const created = await session.create(path)
-  if (created) {
-    diff.reset()
-    approval.syncFromSnapshot(created)
-    events.connect(session.sessionId, { onEvent: handleEvent, onSnapshot: (snapshot) => { session.applySnapshot(snapshot); approval.syncFromSnapshot(snapshot) } })
-    await workspace.loadTree(session.sessionId)
-    activePanel.value = 'editor'
-  }
+async function openChange(runId, change) {
+  selectedChange.value = change
+  await diff.openChange(runId, change.id)
+  if (change.change_type !== 'deleted') await workspace.openFile(projects.currentId, change.path)
+  await nextTick(); editor.value?.select('diff'); activePanel.value = 'editor'
 }
+
+async function openCurrentFile(path) { selectedChange.value = null; await workspace.openFile(projects.currentId, path); await nextTick(); editor.value?.select('current'); activePanel.value = 'editor' }
 </script>
 
 <template>
   <main class="app-shell">
     <AppHeader :store="config" />
-    <nav class="mobile-tabs" aria-label="工作台面板">
-      <button v-for="item in [['workspace','文件'],['editor','预览'],['chat','Agent']]" :key="item[0]" type="button" :class="{ active: activePanel === item[0] }" @click="activePanel = item[0]">{{ item[1] }}</button>
-    </nav>
-    <div class="workbench">
-      <WorkspacePanel class="workspace-slot" :class="{ 'is-active': activePanel === 'workspace' }" :store="workspace" :session-id="session.sessionId" @validated="openWorkspace" @open-file="workspace.openFile(session.sessionId, $event); activePanel = 'editor'" />
-      <EditorPanel class="editor-slot" :class="{ 'is-active': activePanel === 'editor' }" :store="workspace" :diff-store="diff" :modified-files="session.modifiedFiles" @reload="workspace.reloadFile(session.sessionId)" @reload-diff="diff.load(session.sessionId)" @open-file="workspace.openFile(session.sessionId, $event)" />
-      <ChatPanel class="chat-slot" :class="{ 'is-active': activePanel === 'chat' }" :store="session" :event-store="events" />
+    <nav class="mobile-tabs"><button type="button" @click="activePanel = 'projects'">项目</button><button type="button" @click="activePanel = 'chat'">对话</button><button type="button" @click="activePanel = 'editor'">变更</button></nav>
+    <div class="codex-layout">
+      <ProjectSidebar class="project-slot" :class="{ 'is-active': activePanel === 'projects' }" :projects="projects" :conversations="conversations" :workspace="workspace" @select-project="selectProject" @select-conversation="selectConversation" @open-file="openCurrentFile" />
+      <ChatPanel class="chat-slot" :class="{ 'is-active': activePanel === 'chat' }" :conversations="conversations" :run="run" :event-store="events" :approval="approval" @submit="submit" @open-change="openChange" />
+      <EditorPanel ref="editor" class="editor-slot" :class="{ 'is-active': activePanel === 'editor' }" :workspace="workspace" :diff-store="diff" :selected-change="selectedChange" />
     </div>
-    <ApprovalDialog :store="approval" :session-store="session" />
   </main>
 </template>

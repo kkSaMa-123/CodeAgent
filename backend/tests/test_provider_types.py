@@ -70,4 +70,3 @@ def test_fake_provider_satisfies_runtime_protocol() -> None:
 
     assert isinstance(provider, ModelProvider)
     assert result.content == "fake response"
-

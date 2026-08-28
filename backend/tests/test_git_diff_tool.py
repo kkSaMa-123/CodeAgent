@@ -44,9 +44,7 @@ def test_git_diff_includes_tracked_changes_and_untracked_files(tmp_path: Path) -
         )
     )
 
-    result = asyncio.run(
-        GitDiffTool().execute(GitDiffArguments(), tool_context)
-    )
+    result = asyncio.run(GitDiffTool().execute(GitDiffArguments(), tool_context))
 
     assert result.status == "success"
     assert "-before" in result.output
@@ -82,4 +80,3 @@ def test_runtime_collects_modified_files_from_write_results(tmp_path: Path) -> N
     assert state.status is SessionStatus.COMPLETED
     assert state.modified_files == {"a.txt", "nested/b.txt"}
     assert state.workspace_version == 2
-

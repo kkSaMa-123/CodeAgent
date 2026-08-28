@@ -93,4 +93,3 @@ class GitDiffTool:
                 "truncated": limited_diff != complete_diff,
             },
         )
-

@@ -68,4 +68,3 @@ def test_list_files_does_not_follow_symlink(tmp_path: Path) -> None:
     payload = run_list(tmp_path, depth=3)
 
     assert payload["entries"] == [{"path": "link", "type": "symlink"}]
-

@@ -127,4 +127,3 @@ class ReplaceInFileTool:
             modified_files=(relative,),
             workspace_changed=before != after,
         )
-

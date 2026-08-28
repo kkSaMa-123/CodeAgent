@@ -142,4 +142,3 @@ def test_redactor_removes_known_secret_and_authorization_headers() -> None:
     assert "bearer-value" not in sanitized
     assert "another-value" not in sanitized
     assert sanitized.count(REDACTED) == 3
-

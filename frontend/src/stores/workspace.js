@@ -8,7 +8,7 @@ function parentDirectories(path) {
 
 export const useWorkspaceStore = defineStore('workspace', {
   state: () => ({
-    inputPath: '', workspace: '', entries: [], expanded: ['.'], currentFile: '', fileContent: null,
+    projectId: '', inputPath: '', workspace: '', entries: [], expanded: ['.'], currentFile: '', fileContent: null,
     loading: false, error: '', fileLoading: false, fileError: '',
   }),
   getters: {
@@ -35,11 +35,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.loading = false
       }
     },
-    async loadTree(sessionId, client = apiClient) {
+    async loadTree(projectId, client = apiClient) {
+      this.projectId = projectId
       this.loading = true
       this.error = ''
       try {
-        const result = await client.getFileTree(sessionId)
+        const result = await client.getFileTree(projectId)
         this.entries = result.entries || []
       } catch (error) {
         this.error = error.message
@@ -52,12 +53,12 @@ export const useWorkspaceStore = defineStore('workspace', {
         ? this.expanded.filter((item) => item !== path)
         : [...this.expanded, path]
     },
-    async openFile(sessionId, path, client = apiClient) {
+    async openFile(projectId, path, client = apiClient) {
       this.currentFile = path
       this.fileLoading = true
       this.fileError = ''
       try {
-        this.fileContent = await client.getFileContent(sessionId, path)
+        this.fileContent = await client.getFileContent(projectId, path)
       } catch (error) {
         this.fileContent = null
         this.fileError = error.message
@@ -65,8 +66,8 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.fileLoading = false
       }
     },
-    reloadFile(sessionId, client = apiClient) {
-      if (this.currentFile) return this.openFile(sessionId, this.currentFile, client)
+    reloadFile(projectId = this.projectId, client = apiClient) {
+      if (this.currentFile) return this.openFile(projectId, this.currentFile, client)
     },
   },
 })

@@ -113,6 +113,53 @@ def test_tool_error_is_observation_and_model_can_recover(tmp_path: Path) -> None
     assert json.loads(tool_messages[1].content or "")["status"] == "success"
 
 
+def test_tool_events_keep_safe_diagnostic_details(tmp_path: Path) -> None:
+    command_call = call(
+        "call-command",
+        "run_command",
+        {"command": "g++ main.cpp -o main"},
+    )
+    provider = FakeProvider(
+        AssistantTurn(tool_calls=(command_call,)),
+        AssistantTurn(content="fixed"),
+    )
+    command_output = json.dumps(
+        {
+            "command": "g++ main.cpp -o main",
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "main.cpp:1: error: expected declaration",
+            "duration_seconds": 0.125,
+            "timed_out": False,
+            "cancelled": False,
+        }
+    )
+    runtime = AgentRuntime(
+        provider,
+        MappingToolExecutor(
+            {
+                "run_command": lambda _call, _context: ToolExecutionResult.error(
+                    command_output,
+                    error_type="command_failed",
+                    summary="命令以退出码 1 结束",
+                    metadata={"exit_code": 1, "duration_seconds": 0.125},
+                )
+            }
+        ),
+        system_prompt="system",
+    )
+    state = asyncio.run(runtime.run(make_state(tmp_path), "compile"))
+    events = state.events.snapshot()
+    started = next(event for event in events if event.event_type == "tool.started")
+    completed = next(event for event in events if event.event_type == "tool.completed")
+
+    assert started.payload["command"] == "g++ main.cpp -o main"
+    assert completed.payload["error_type"] == "command_failed"
+    assert completed.payload["summary"] == "命令以退出码 1 结束"
+    assert completed.payload["metadata"]["exit_code"] == 1
+    assert completed.payload["details"]["stderr"] == "main.cpp:1: error: expected declaration"
+
+
 def test_max_iterations_has_explicit_reason(tmp_path: Path) -> None:
     provider = FakeProvider(AssistantTurn(tool_calls=(call("repeat", "noop", {}),)))
     runtime = AgentRuntime(
