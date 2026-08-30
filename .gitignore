@@ -38,6 +38,7 @@ agent_trace*.json
 .agent/
 .agents/
 openspec/
+skills/
 
 # Editors and operating systems
 .DS_Store
