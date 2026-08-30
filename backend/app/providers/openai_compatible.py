@@ -6,6 +6,8 @@ import asyncio
 import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import openai
@@ -17,7 +19,15 @@ from app.providers.redaction import SecretRedactor
 from app.providers.types import AssistantTurn, ChatMessage, TokenUsage, ToolCall, ToolDefinition
 
 RetryCallback = Callable[[RetryEvent], Awaitable[None] | None]
+DeltaCallback = Callable[[str], Awaitable[None] | None]
 Sleeper = Callable[[float], Awaitable[None]]
+
+
+@dataclass(slots=True)
+class _PartialToolCall:
+    id: str = ""
+    name: str = ""
+    arguments: str = ""
 
 
 class OpenAICompatibleProvider:
@@ -29,6 +39,7 @@ class OpenAICompatibleProvider:
         *,
         client: Any | None = None,
         on_retry: RetryCallback | None = None,
+        on_reasoning_delta: DeltaCallback | None = None,
         sleeper: Sleeper = asyncio.sleep,
     ) -> None:
         self._settings = settings
@@ -40,6 +51,7 @@ class OpenAICompatibleProvider:
             max_retries=0,
         )
         self._on_retry = on_retry
+        self._on_reasoning_delta = on_reasoning_delta
         self._sleeper = sleeper
         self._redactor = SecretRedactor((settings.api_key.get_secret_value(),))
 
@@ -51,20 +63,21 @@ class OpenAICompatibleProvider:
         request: dict[str, Any] = {
             "model": self._settings.model,
             "messages": [self._message_payload(message) for message in messages],
-            "stream": False,
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             request["tools"] = [dict(tool) for tool in tools]
         if self._settings.extra_body:
             request["extra_body"] = self._settings.extra_body
 
-        response = await self._request_with_retries(request)
-        return self._parse_response(response)
+        return await self._request_with_retries(request)
 
-    async def _request_with_retries(self, request: dict[str, Any]) -> Any:
+    async def _request_with_retries(self, request: dict[str, Any]) -> AssistantTurn:
         for attempt in range(self._settings.max_retries + 1):
             try:
-                return await self._client.chat.completions.create(**request)
+                response = await self._client.chat.completions.create(**request)
+                return await self._consume_stream(response)
             except Exception as exc:
                 error = self._normalize_error(exc)
                 if not error.retryable or attempt >= self._settings.max_retries:
@@ -85,6 +98,121 @@ class OpenAICompatibleProvider:
                         await notification
                 await self._sleeper(delay)
         raise AssertionError("retry loop exited unexpectedly")
+
+    async def _consume_stream(self, response: Any) -> AssistantTurn:
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        reasoning_displayed = 0
+        reasoning_display_buffer = ""
+        partial_calls: dict[int, _PartialToolCall] = {}
+        finish_reason: str | None = None
+        token_usage = TokenUsage()
+
+        try:
+            async for chunk in response:
+                usage = self._field(chunk, "usage")
+                if usage is not None:
+                    token_usage = TokenUsage(
+                        prompt_tokens=int(self._field(usage, "prompt_tokens", 0) or 0),
+                        completion_tokens=int(
+                            self._field(usage, "completion_tokens", 0) or 0
+                        ),
+                        total_tokens=int(self._field(usage, "total_tokens", 0) or 0),
+                    )
+                choices = self._field(chunk, "choices", ()) or ()
+                if not choices:
+                    continue
+                choice = choices[0]
+                finish_reason = self._field(choice, "finish_reason") or finish_reason
+                delta = self._field(choice, "delta")
+                if delta is None:
+                    continue
+
+                content = self._field(delta, "content")
+                if isinstance(content, str) and content:
+                    content_parts.append(content)
+
+                reasoning = self._field(delta, "reasoning_content")
+                if isinstance(reasoning, str) and reasoning:
+                    reasoning_parts.append(reasoning)
+                    if reasoning_displayed < 12_000:
+                        visible = reasoning[: 12_000 - reasoning_displayed]
+                        reasoning_displayed += len(visible)
+                        reasoning_display_buffer += visible
+                        if len(reasoning_display_buffer) >= 80 or "\n" in visible:
+                            await self._notify_reasoning(
+                                self._redactor.redact(reasoning_display_buffer)
+                            )
+                            reasoning_display_buffer = ""
+
+                for tool_delta in self._field(delta, "tool_calls", ()) or ():
+                    index = int(self._field(tool_delta, "index", 0) or 0)
+                    partial = partial_calls.setdefault(index, _PartialToolCall())
+                    call_id = self._field(tool_delta, "id")
+                    if isinstance(call_id, str) and call_id:
+                        partial.id = call_id
+                    function = self._field(tool_delta, "function")
+                    if function is not None:
+                        name = self._field(function, "name")
+                        arguments = self._field(function, "arguments")
+                        if isinstance(name, str) and name:
+                            partial.name += name
+                        if isinstance(arguments, str) and arguments:
+                            partial.arguments += arguments
+        except TypeError as exc:
+            raise ProviderError(
+                ProviderErrorKind.INVALID_RESPONSE,
+                "模型流式响应不可迭代",
+                retryable=False,
+            ) from exc
+
+        if reasoning_display_buffer:
+            await self._notify_reasoning(
+                self._redactor.redact(reasoning_display_buffer)
+            )
+
+        tool_calls = tuple(
+            self._parse_tool_call(
+                SimpleNamespace(
+                    id=partial.id,
+                    function=SimpleNamespace(
+                        name=partial.name,
+                        arguments=partial.arguments,
+                    ),
+                )
+            )
+            for _, partial in sorted(partial_calls.items())
+        )
+        reasoning_content = "".join(reasoning_parts)
+        provider_fields = (
+            {"reasoning_content": reasoning_content} if reasoning_content else {}
+        )
+        return AssistantTurn(
+            content="".join(content_parts) or None,
+            tool_calls=tool_calls,
+            usage=token_usage,
+            finish_reason=finish_reason,
+            provider_fields=provider_fields,
+        )
+
+    async def _notify_reasoning(self, content: str) -> None:
+        if not content or self._on_reasoning_delta is None:
+            return
+        notification = self._on_reasoning_delta(content)
+        if inspect.isawaitable(notification):
+            await notification
+
+    @staticmethod
+    def _field(value: Any, name: str, default: Any = None) -> Any:
+        if isinstance(value, Mapping):
+            return value.get(name, default)
+        result = getattr(value, name, default)
+        if result is not default:
+            return result
+        model_extra = getattr(value, "model_extra", None)
+        if isinstance(model_extra, Mapping):
+            return model_extra.get(name, default)
+        return default
 
     def _message_payload(self, message: ChatMessage) -> dict[str, Any]:
         payload: dict[str, Any] = {"role": message.role, "content": message.content}
@@ -167,6 +295,8 @@ class OpenAICompatibleProvider:
         )
 
     def _normalize_error(self, exc: Exception) -> ProviderError:
+        if isinstance(exc, ProviderError):
+            return exc
         message = self._redactor.redact(str(exc)) or type(exc).__name__
         status_code = getattr(exc, "status_code", None)
 

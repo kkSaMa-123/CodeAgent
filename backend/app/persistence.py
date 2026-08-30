@@ -12,9 +12,11 @@ from typing import Any
 from uuid import uuid4
 
 from app.agent.state import AgentEvent, RunState
+from app.capabilities import ALL_TOOL_NAMES, CapabilitySnapshot, validate_tool_names
+from app.skills import LoadedSkill
 from app.tools.paths import validate_workspace
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ACTIVE_STATUSES = ("queued", "running", "waiting_approval")
 
 
@@ -141,7 +143,34 @@ class SQLiteRepository:
                     diff TEXT, preview TEXT, preview_kind TEXT NOT NULL,
                     UNIQUE(run_id, path)
                 );
+                CREATE TABLE IF NOT EXISTS skills (
+                    id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE,
+                    description TEXT NOT NULL, version TEXT NOT NULL, digest TEXT NOT NULL,
+                    required_tools TEXT NOT NULL, recommended_tools TEXT NOT NULL,
+                    instructions TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS conversation_capabilities (
+                    conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+                    enabled_tools TEXT NOT NULL, enabled_skills TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS run_capability_snapshots (
+                    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+                    enabled_tools TEXT NOT NULL, skills TEXT NOT NULL,
+                    legacy INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                );
                 """
+            )
+            self._db.execute(
+                "INSERT OR IGNORE INTO conversation_capabilities "
+                "SELECT id, ?, '[]', ? FROM conversations",
+                (json.dumps(sorted(ALL_TOOL_NAMES)), _now()),
+            )
+            self._db.execute(
+                "INSERT OR IGNORE INTO run_capability_snapshots "
+                "SELECT id, ?, '[]', 1, created_at FROM runs",
+                (json.dumps(sorted(ALL_TOOL_NAMES)),),
             )
             self._db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
@@ -246,6 +275,10 @@ class SQLiteRepository:
                     timestamp,
                 ),
             )
+            self._db.execute(
+                "INSERT INTO conversation_capabilities VALUES (?,?,?,?)",
+                (conversation_id, json.dumps(sorted(ALL_TOOL_NAMES)), "[]", timestamp),
+            )
         return self.get_conversation(conversation_id)
 
     def _conversation(self, row: sqlite3.Row) -> Conversation:
@@ -318,6 +351,17 @@ class SQLiteRepository:
             self._db.execute(
                 "INSERT INTO messages VALUES (?,?,?,?,?,?,?)",
                 (str(uuid4()), conversation_id, run_id, "user", clean, count + 1, timestamp),
+            )
+            snapshot = self._capability_snapshot(conversation_id)
+            self._db.execute(
+                "INSERT INTO run_capability_snapshots VALUES (?,?,?,?,?)",
+                (
+                    run_id,
+                    json.dumps(snapshot.enabled_tools),
+                    json.dumps(list(snapshot.skills), ensure_ascii=False),
+                    0,
+                    timestamp,
+                ),
             )
             existing = self._db.execute(
                 "SELECT COUNT(*) FROM runs WHERE conversation_id=?", (conversation_id,)
@@ -530,6 +574,140 @@ class SQLiteRepository:
             "journal_mode": self._db.execute("PRAGMA journal_mode").fetchone()[0],
             "busy_timeout": self._db.execute("PRAGMA busy_timeout").fetchone()[0],
         }
+
+    def list_skills(self) -> list[dict[str, Any]]:
+        rows = self._db.execute(
+            "SELECT id,path,name,description,version,digest,required_tools,recommended_tools,"
+            "created_at,updated_at FROM skills ORDER BY name"
+        ).fetchall()
+        return [self._skill_public(row) for row in rows]
+
+    @staticmethod
+    def _skill_public(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["required_tools"] = json.loads(item["required_tools"])
+        item["recommended_tools"] = json.loads(item["recommended_tools"])
+        return item
+
+    def get_skill(self, skill_id: str, *, include_instructions: bool = False) -> dict[str, Any]:
+        row = self._db.execute("SELECT * FROM skills WHERE id=?", (skill_id,)).fetchone()
+        if not row:
+            raise NotFoundError("skill not found")
+        item = self._skill_public(row)
+        if include_instructions:
+            item["instructions"] = row["instructions"]
+        return item
+
+    def register_skill(self, skill: LoadedSkill) -> dict[str, Any]:
+        timestamp = _now()
+        with self._lock, self._db:
+            row = self._db.execute("SELECT id FROM skills WHERE path=?", (skill.path,)).fetchone()
+            skill_id = row["id"] if row else str(uuid4())
+            try:
+                self._db.execute(
+                    "INSERT INTO skills VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(path) DO UPDATE SET name=excluded.name,"
+                    "description=excluded.description,"
+                    "version=excluded.version,digest=excluded.digest,required_tools=excluded.required_tools,"
+                    "recommended_tools=excluded.recommended_tools,instructions=excluded.instructions,updated_at=excluded.updated_at",
+                    (
+                        skill_id,
+                        skill.path,
+                        skill.name,
+                        skill.description,
+                        skill.version,
+                        skill.digest,
+                        json.dumps(skill.required_tools),
+                        json.dumps(skill.recommended_tools),
+                        skill.instructions,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ConflictError("Skill 名称已经存在") from exc
+        return self.get_skill(skill_id, include_instructions=True)
+
+    def delete_skill(self, skill_id: str) -> None:
+        with self._lock, self._db:
+            for row in self._db.execute(
+                "SELECT enabled_skills FROM conversation_capabilities"
+            ).fetchall():
+                if skill_id in json.loads(row["enabled_skills"]):
+                    raise ConflictError("Skill 仍被对话启用")
+            changed = self._db.execute("DELETE FROM skills WHERE id=?", (skill_id,)).rowcount
+            if not changed:
+                raise NotFoundError("skill not found")
+
+    def _capability_snapshot(self, conversation_id: str) -> CapabilitySnapshot:
+        self.get_conversation(conversation_id)
+        row = self._db.execute(
+            "SELECT * FROM conversation_capabilities WHERE conversation_id=?", (conversation_id,)
+        ).fetchone()
+        if not row:
+            return CapabilitySnapshot(tuple(sorted(ALL_TOOL_NAMES)))
+        enabled_tools = validate_tool_names(json.loads(row["enabled_tools"]))
+        skills = []
+        for skill_id in json.loads(row["enabled_skills"]):
+            skill = self.get_skill(skill_id, include_instructions=True)
+            skills.append(
+                {
+                    key: skill[key]
+                    for key in ("id", "name", "version", "digest", "required_tools", "instructions")
+                }
+            )
+        return CapabilitySnapshot(enabled_tools, tuple(skills))
+
+    def get_conversation_capabilities(self, conversation_id: str) -> dict[str, Any]:
+        snapshot = self._capability_snapshot(conversation_id)
+        return {**snapshot.public_dict(), "conversation_id": conversation_id}
+
+    def set_conversation_capabilities(
+        self, conversation_id: str, enabled_tools: list[str], enabled_skills: list[str]
+    ) -> dict[str, Any]:
+        tools = validate_tool_names(enabled_tools)
+        placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
+        with self._lock, self._db:
+            self.get_conversation(conversation_id)
+            active = self._db.execute(
+                f"SELECT 1 FROM runs WHERE conversation_id=? AND status IN ({placeholders})",
+                (conversation_id, *ACTIVE_STATUSES),
+            ).fetchone()
+            if active:
+                raise ConflictError("运行期间不能修改能力配置")
+            selected: list[str] = []
+            for skill_id in dict.fromkeys(enabled_skills):
+                skill = self.get_skill(skill_id)
+                missing = sorted(set(skill["required_tools"]) - set(tools))
+                if missing:
+                    raise ValueError(f"Skill {skill['name']} 缺少必需工具: {', '.join(missing)}")
+                selected.append(skill_id)
+            self._db.execute(
+                "INSERT INTO conversation_capabilities VALUES (?,?,?,?) "
+                "ON CONFLICT(conversation_id) DO UPDATE SET enabled_tools=excluded.enabled_tools,"
+                "enabled_skills=excluded.enabled_skills,updated_at=excluded.updated_at",
+                (conversation_id, json.dumps(tools), json.dumps(selected), _now()),
+            )
+        return self.get_conversation_capabilities(conversation_id)
+
+    def get_run_capabilities(
+        self, run_id: str, *, include_instructions: bool = False
+    ) -> CapabilitySnapshot:
+        self.get_run(run_id)
+        row = self._db.execute(
+            "SELECT * FROM run_capability_snapshots WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if not row:
+            return CapabilitySnapshot(tuple(sorted(ALL_TOOL_NAMES)), legacy=True)
+        skills = json.loads(row["skills"])
+        if not include_instructions:
+            skills = [
+                {key: value for key, value in skill.items() if key != "instructions"}
+                for skill in skills
+            ]
+        return CapabilitySnapshot(
+            tuple(json.loads(row["enabled_tools"])), tuple(skills), bool(row["legacy"])
+        )
 
 
 def public_dict(value: Project | Conversation) -> dict[str, Any]:

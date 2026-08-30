@@ -58,3 +58,15 @@ it('相同工具调用聚合为一组并累加耗时', () => {
   expect(store.groupedToolTraces[0].count).toBe(2)
   expect(store.groupedToolTraces[0].durationSeconds).toBeCloseTo(0.3)
 })
+
+it('流式累积多轮思考内容并展示模型重试状态', () => {
+  const store = useEventStore(); store.reset('r1')
+  store.ingest({ run_id: 'r1', sequence: 1, event_type: 'model.started', payload: { iteration: 1 } })
+  store.ingest({ run_id: 'r1', sequence: 2, event_type: 'model.reasoning.delta', payload: { content: '先读取文件。' } })
+  store.ingest({ run_id: 'r1', sequence: 3, event_type: 'model.started', payload: { iteration: 2 } })
+  store.ingest({ run_id: 'r1', sequence: 4, event_type: 'model.reasoning.delta', payload: { content: '然后修复测试。' } })
+  expect(store.reasoningText).toBe('先读取文件。\n\n然后修复测试。')
+
+  store.ingest({ run_id: 'r1', sequence: 5, event_type: 'model.retrying', payload: { attempt: 2, error_kind: 'request_timeout' } })
+  expect(store.activity.label).toContain('第 2 次重试')
+})

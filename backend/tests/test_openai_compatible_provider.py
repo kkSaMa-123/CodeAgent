@@ -10,6 +10,21 @@ from app.config import ModelSettings
 from app.providers import ChatMessage, OpenAICompatibleProvider
 
 
+class AsyncStream:
+    def __init__(self, *chunks: object) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self):
+        self._iterator = iter(self._chunks)
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._iterator)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
 def make_settings(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> ModelSettings:
     values = {
         "LLM_PROVIDER": "test-provider",
@@ -38,25 +53,30 @@ def make_response(
     content: str | None = None,
     tool_calls: list[SimpleNamespace] | None = None,
     reasoning_content: str | None = None,
-) -> SimpleNamespace:
-    message = SimpleNamespace(
+) -> AsyncStream:
+    deltas = [
+        SimpleNamespace(index=index, id=call.id, function=call.function)
+        for index, call in enumerate(tool_calls or [])
+    ]
+    delta = SimpleNamespace(
         content=content,
-        tool_calls=tool_calls or [],
+        tool_calls=deltas,
         reasoning_content=reasoning_content,
         model_extra=None,
     )
-    return SimpleNamespace(
+    chunk = SimpleNamespace(
         choices=[
             SimpleNamespace(
-                message=message,
+                delta=delta,
                 finish_reason="tool_calls" if tool_calls else "stop",
             )
         ],
         usage=SimpleNamespace(prompt_tokens=12, completion_tokens=7, total_tokens=19),
     )
+    return AsyncStream(chunk)
 
 
-def make_client(*responses: SimpleNamespace) -> tuple[SimpleNamespace, AsyncMock]:
+def make_client(*responses: object) -> tuple[SimpleNamespace, AsyncMock]:
     create = AsyncMock(side_effect=list(responses))
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     return client, create
@@ -86,6 +106,7 @@ def test_parses_standard_tool_call_and_usage(monkeypatch: pytest.MonkeyPatch) ->
     assert turn.usage.total_tokens == 19
     request = create.await_args.kwargs
     assert request["model"] == "test-model"
+    assert request["stream"] is True
     assert request["tools"] == tools
     assert request["messages"] == [{"role": "user", "content": "read main.py"}]
 
@@ -104,6 +125,69 @@ def test_preserves_multiple_tool_calls_in_response_order(monkeypatch: pytest.Mon
     turn = asyncio.run(provider.complete([ChatMessage.user("read files")]))
 
     assert [call.id for call in turn.tool_calls] == ["call-1", "call-2"]
+
+
+def test_reassembles_streamed_reasoning_content_and_tool_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings(monkeypatch)
+    chunks = AsyncStream(
+        SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=None,
+                    reasoning_content="先读取",
+                    tool_calls=[
+                        SimpleNamespace(
+                            index=0,
+                            id="call-1",
+                            function=SimpleNamespace(
+                                name="read_file", arguments='{"path"'
+                            ),
+                        )
+                    ],
+                ),
+                finish_reason=None,
+            )],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=None,
+                    reasoning_content="文件。",
+                    tool_calls=[
+                        SimpleNamespace(
+                            index=0,
+                            id=None,
+                            function=SimpleNamespace(
+                                name=None, arguments=':"main.py"}'
+                            ),
+                        )
+                    ],
+                ),
+                finish_reason="tool_calls",
+            )],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=4, total_tokens=14),
+        ),
+    )
+    client, _ = make_client(chunks)
+    deltas = []
+    provider = OpenAICompatibleProvider(
+        settings, client=client, on_reasoning_delta=deltas.append
+    )
+
+    turn = asyncio.run(provider.complete([ChatMessage.user("读取")]))
+
+    assert turn.provider_fields["reasoning_content"] == "先读取文件。"
+    assert deltas == ["先读取文件。"]
+    assert turn.tool_calls[0].name == "read_file"
+    assert turn.tool_calls[0].arguments == {"path": "main.py"}
+    assert turn.usage.total_tokens == 14
 
 
 @pytest.mark.parametrize("raw_arguments", ["not-json", "[]", "null"])
@@ -133,7 +217,10 @@ def test_reasoning_content_is_returned_to_provider_but_not_normal_content(
     )
     second = make_response(content="done")
     client, create = make_client(first, second)
-    provider = OpenAICompatibleProvider(settings, client=client)
+    reasoning_deltas = []
+    provider = OpenAICompatibleProvider(
+        settings, client=client, on_reasoning_delta=reasoning_deltas.append
+    )
 
     first_turn = asyncio.run(provider.complete([ChatMessage.user("read")]))
     messages = [
@@ -145,6 +232,7 @@ def test_reasoning_content_is_returned_to_provider_but_not_normal_content(
 
     assert first_turn.content is None
     assert first_turn.provider_fields == {"reasoning_content": "private reasoning"}
+    assert reasoning_deltas == ["private reasoning"]
     assert second_turn.content == "done"
     second_request_messages = create.await_args_list[1].kwargs["messages"]
     assert second_request_messages[1]["reasoning_content"] == "private reasoning"

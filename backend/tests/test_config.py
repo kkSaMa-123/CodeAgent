@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_settings import SettingsError
 
-from app.config import ModelSettings, inspect_model_configuration
+from app.config import ModelSettings, RuntimeSettings, inspect_model_configuration
 
 MODEL_ENV_KEYS = (
     "LLM_PROVIDER",
@@ -14,6 +14,7 @@ MODEL_ENV_KEYS = (
     "LLM_TIMEOUT_SECONDS",
     "LLM_MAX_RETRIES",
     "LLM_EXTRA_BODY_JSON",
+    "CODEAGENT_TASK_TIMEOUT_SECONDS",
 )
 
 
@@ -118,6 +119,28 @@ def test_configuration_status_never_exposes_key(monkeypatch: pytest.MonkeyPatch)
     assert status.summary is not None
     assert status.summary["api_key_configured"] is True
     assert "test-secret-not-real" not in repr(status)
+
+
+def test_runtime_timeout_defaults_to_fifteen_minutes() -> None:
+    settings = RuntimeSettings(_env_file=None)
+
+    assert settings.task_timeout_seconds == 900
+
+
+def test_runtime_timeout_can_be_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEAGENT_TASK_TIMEOUT_SECONDS", "1200")
+
+    assert RuntimeSettings(_env_file=None).task_timeout_seconds == 1200
+
+
+@pytest.mark.parametrize("value", ["59", "7201", "invalid"])
+def test_rejects_invalid_runtime_timeout(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("CODEAGENT_TASK_TIMEOUT_SECONDS", value)
+
+    with pytest.raises(ValidationError):
+        RuntimeSettings(_env_file=None)
 
 
 def test_configuration_status_reports_missing_fields_without_values() -> None:

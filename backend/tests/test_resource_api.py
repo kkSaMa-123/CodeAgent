@@ -109,3 +109,36 @@ def test_resource_ownership_history_changes_and_sse(tmp_path: Path) -> None:
             ).status_code
             == 400
         )
+
+
+def test_tool_and_skill_configuration_api(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: api-review\ndescription: API 测试\nrequired_tools:\n  - read_file\n"
+        "---\n\n只读取并审查代码。",
+        encoding="utf-8",
+    )
+    app = create_app(services(tmp_path))
+    with TestClient(app) as client:
+        project = client.post("/api/projects", json={"workspace": str(workspace)}).json()
+        conversation = client.post(
+            f"/api/projects/{project['id']}/conversations", json={}
+        ).json()
+        tools = client.get("/api/capabilities/tools").json()
+        assert {item["name"] for item in tools} >= {"read_file", "run_command"}
+        skill = client.post("/api/skills", json={"path": str(skill_dir)}).json()
+        configured = client.put(
+            f"/api/conversations/{conversation['id']}/capabilities",
+            json={"enabled_tools": ["read_file"], "enabled_skills": [skill["id"]]},
+        ).json()
+        assert configured["enabled_tools"] == ["read_file"]
+        run = client.post(
+            f"/api/conversations/{conversation['id']}/runs", json={"task": "审查"}
+        ).json()
+        wait(client, run["id"])
+        snapshot = client.get(f"/api/runs/{run['id']}/capabilities").json()
+        assert snapshot["enabled_tools"] == ["read_file"]
+        assert snapshot["skills"][0]["name"] == "api-review"

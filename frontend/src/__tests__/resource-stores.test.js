@@ -26,6 +26,7 @@ describe('项目、对话与运行 Store', () => {
         { sequence: 1, timestamp: '2026-01-01T00:00:00Z', event_type: 'tool.started', payload: { tool_call_id: 't1', name: 'read_file', path: 'app.py' } },
         { sequence: 2, timestamp: '2026-01-01T00:00:00.1Z', event_type: 'tool.completed', payload: { tool_call_id: 't1', name: 'read_file', status: 'success' } },
       ]),
+      getRunCapabilities: vi.fn().mockResolvedValue({ enabled_tools: ['read_file'], skills: [], legacy: false }),
     }
     await store.load('p1', client); await store.select('c1', client)
     expect(store.messages[0].content).toBe('第一轮'); expect(store.changesByRun.r1[0].path).toBe('app.py')
@@ -54,5 +55,15 @@ describe('项目、对话与运行 Store', () => {
     await submission
     expect(store.runId).toBe('r1')
     expect(store.status).toBe('running')
+  })
+
+  it('新运行可立即加入对话以承载实时工具事件', () => {
+    const store = useConversationStore()
+    store.runs = [{ id: 'old', status: 'completed' }]
+
+    expect(store.trackRun({ id: 'r1', status: 'running' })).toBe(true)
+    expect(store.runs.map((item) => item.id)).toEqual(['old', 'r1'])
+    store.trackRun({ id: 'r1', status: 'completed' })
+    expect(store.runs.find((item) => item.id === 'r1').status).toBe('completed')
   })
 })

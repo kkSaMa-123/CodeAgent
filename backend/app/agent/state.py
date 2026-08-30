@@ -12,6 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from app.capabilities import CapabilitySnapshot
 from app.providers.redaction import SecretRedactor
 from app.providers.types import ChatMessage
 
@@ -152,6 +153,7 @@ class RunState:
     final_answer: str | None = None
     workspace_version: int = 0
     modified_files: set[str] = field(default_factory=set)
+    capabilities: CapabilitySnapshot | None = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _terminal_event_emitted: bool = field(default=False, init=False, repr=False)

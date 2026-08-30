@@ -25,7 +25,7 @@ function fileSize(size) {
 
 <template>
   <aside class="project-sidebar" :class="{ collapsed: !projects.drawerOpen }">
-    <header class="sidebar-heading"><strong>项目</strong><button class="icon-button" type="button" aria-label="折叠项目栏" @click="projects.drawerOpen = !projects.drawerOpen">{{ projects.drawerOpen ? '‹' : '›' }}</button></header>
+    <header class="sidebar-heading"><strong>项目</strong><button class="icon-button sidebar-toggle" type="button" :aria-label="projects.drawerOpen ? '收起项目栏' : '展开项目栏'" :title="projects.drawerOpen ? '收起项目栏' : '展开项目栏'" @click="projects.drawerOpen = !projects.drawerOpen">{{ projects.drawerOpen ? '‹' : '☰' }}</button></header>
     <template v-if="projects.drawerOpen">
       <form class="project-add" @submit.prevent="addProject"><input v-model="projectPath" aria-label="项目文件夹" placeholder="本地项目绝对路径" /><button class="primary compact" :disabled="!projectPath.trim()">添加</button></form>
       <p v-if="projects.error" class="inline-error">{{ projects.error }} <button type="button" @click="projects.load()">重试</button></p>

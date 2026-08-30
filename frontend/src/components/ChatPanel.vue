@@ -3,10 +3,12 @@ import { nextTick, ref, watch } from 'vue'
 import AgentActivityCard from './AgentActivityCard.vue'
 import ApprovalCard from './ApprovalCard.vue'
 import MarkdownContent from './MarkdownContent.vue'
+import ReasoningCard from './ReasoningCard.vue'
 import ToolActivityLine from './ToolActivityLine.vue'
+import { buildReasoningText } from '../stores/events'
 
-const props = defineProps({ conversations: { type: Object, required: true }, run: { type: Object, required: true }, eventStore: { type: Object, required: true }, approval: { type: Object, required: true } })
-const emit = defineEmits(['submit', 'open-change'])
+const props = defineProps({ conversations: { type: Object, required: true }, run: { type: Object, required: true }, eventStore: { type: Object, required: true }, approval: { type: Object, required: true }, rightPanel: { type: String, default: 'changes' } })
+const emit = defineEmits(['submit', 'open-change', 'show-capabilities'])
 const task = ref('')
 const messagesElement = ref(null)
 const followsLatest = ref(true)
@@ -16,6 +18,20 @@ function toolGroups(runId) {
   if (props.eventStore.runId === runId && props.eventStore.groupedToolTraces?.length) return props.eventStore.groupedToolTraces
   return props.conversations.toolGroupsByRun?.[runId] || []
 }
+function reasoningText(runId) {
+  if (props.eventStore.runId === runId) return props.eventStore.reasoningText || ''
+  return buildReasoningText(props.conversations.eventsByRun?.[runId] || [])
+}
+const terminationLabels = {
+  task_timeout: '任务超过最大运行时长',
+  max_iterations: '达到最大思考轮数',
+  repeated_tool_call: '检测到无进展的重复工具调用',
+  provider_error: '模型服务调用失败',
+  internal_error: 'Agent 内部错误',
+  server_restarted: '后端服务已重启',
+  approval_denied: '命令未获批准',
+}
+function terminationLabel(item) { return terminationLabels[item.termination_reason] || item.termination_reason || '' }
 function submit() { const value = task.value.trim(); if (!value) return; followsLatest.value = true; emit('submit', value); task.value = ''; scrollToLatest(true) }
 function trackScroll() { const element = messagesElement.value; if (element) followsLatest.value = element.scrollHeight - element.scrollTop - element.clientHeight < 80 }
 async function scrollToLatest(force = false) { await nextTick(); const element = messagesElement.value; if (element && (force || followsLatest.value)) element.scrollTo({ top: element.scrollHeight, behavior: 'smooth' }) }
@@ -29,22 +45,24 @@ watch(
 
 <template>
   <section class="panel chat-panel">
-    <div class="panel-heading"><div><p class="kicker">Conversation</p><h2>{{ conversations.current?.title || '选择一个对话' }}</h2></div><span class="status-badge" :data-status="run.status">{{ run.status }}</span></div>
+    <div class="panel-heading"><div><p class="kicker">Conversation</p><h2>{{ conversations.current?.title || '选择一个对话' }}</h2></div><div class="conversation-capabilities"><button type="button" :class="{ active: rightPanel === 'tools' }" :disabled="!conversations.currentId" @click="emit('show-capabilities', 'tools')">工具</button><button type="button" :class="{ active: rightPanel === 'skills' }" :disabled="!conversations.currentId" @click="emit('show-capabilities', 'skills')">Skill</button><span class="status-badge" :data-status="run.status">{{ run.status }}</span></div></div>
     <div ref="messagesElement" class="messages" aria-live="polite" @scroll.passive="trackScroll">
       <div v-if="!conversations.currentId" class="agent-intro"><span class="agent-avatar">A</span><div><strong>选择或新建对话</strong><p>每个对话拥有独立上下文，可以连续进行多轮任务。</p></div></div>
       <article v-for="item in conversations.runs" :key="item.id" class="run-turn">
         <div v-if="message(item.id, 'user')" class="message user"><small>你</small><p>{{ message(item.id, 'user').content }}</p></div>
+        <div v-else-if="item.id === run.runId && run.pendingTask" class="message user optimistic-message"><small>你</small><p>{{ run.pendingTask }}</p></div>
+        <ReasoningCard v-if="reasoningText(item.id)" :content="reasoningText(item.id)" :running="item.id === run.runId && run.isActive" />
         <section v-if="toolGroups(item.id).length" class="tool-activity-list" aria-label="Agent 运转过程">
           <p class="process-label">Agent 运转过程</p>
+          <p v-if="conversations.capabilitiesByRun?.[item.id]" class="run-capabilities">本轮启用 {{ conversations.capabilitiesByRun[item.id].enabled_tools.length }} 个工具<span v-if="conversations.capabilitiesByRun[item.id].skills.length"> · 使用 {{ conversations.capabilitiesByRun[item.id].skills.map((skill) => skill.name).join('、') }}</span></p>
           <ToolActivityLine v-for="group in toolGroups(item.id)" :key="group.name" :group="group" />
         </section>
         <div class="run-summary" :data-status="item.status">
-          <span>{{ item.status === 'completed' ? '任务已完成' : item.status === 'failed' ? '任务失败' : item.status === 'cancelled' ? '任务已停止' : '任务进行中' }}</span><span v-if="item.termination_reason && item.termination_reason !== item.status">{{ item.termination_reason }}</span>
+          <span>{{ item.status === 'completed' ? '任务已完成' : item.status === 'failed' ? '任务失败' : item.status === 'cancelled' ? '任务已停止' : '任务进行中' }}</span><span v-if="item.termination_reason && item.termination_reason !== item.status">{{ terminationLabel(item) }}</span>
           <button v-for="change in conversations.changesByRun[item.id] || []" :key="change.id" type="button" :class="{ artifact: change.preview_kind === 'binary' }" @click="emit('open-change', item.id, change)"><b>{{ change.preview_kind === 'binary' ? 'BIN' : change.change_type[0].toUpperCase() }}</b>{{ change.path }} <small>{{ change.preview_kind === 'binary' ? '二进制生成物' : `+${change.additions} -${change.deletions}` }}</small></button>
         </div>
         <div v-if="message(item.id, 'assistant')" class="message assistant final-answer"><small>Agent · 最终输出</small><MarkdownContent :content="message(item.id, 'assistant').content" /></div>
       </article>
-      <div v-if="run.pendingTask && !message(run.runId, 'user')" class="message user optimistic-message"><small>你</small><p>{{ run.pendingTask }}</p></div>
       <AgentActivityCard :run="run" :event-store="eventStore" :approval="approval" />
       <ApprovalCard :store="approval" :run-store="run" />
       <p v-if="eventStore.error" class="inline-error recoverable-error">{{ eventStore.error }}</p><p v-if="conversations.error || run.error" class="inline-error"><span>{{ conversations.error || run.error }}</span> <button type="button" @click="conversations.refresh()">重试</button></p>

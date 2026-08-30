@@ -45,6 +45,12 @@ export class ApiClient {
   }
 
   getConfigStatus() { return this.request('/api/config/status') }
+  getToolCatalog() { return this.request('/api/capabilities/tools') }
+  listSkills() { return this.request('/api/skills') }
+  addSkill(path) { return this.request('/api/skills', { method: 'POST', body: JSON.stringify({ path }) }) }
+  getSkill(id) { return this.request(`/api/skills/${id}`) }
+  refreshSkill(id) { return this.request(`/api/skills/${id}`, { method: 'PATCH' }) }
+  removeSkill(id) { return this.request(`/api/skills/${id}`, { method: 'DELETE' }) }
   validateWorkspace(path) {
     return this.request('/api/workspaces/validate', { method: 'POST', body: JSON.stringify({ path }) })
   }
@@ -62,10 +68,15 @@ export class ApiClient {
   renameConversation(id, title) { return this.request(`/api/conversations/${id}`, { method: 'PATCH', body: JSON.stringify({ title }) }) }
   deleteConversation(id) { return this.request(`/api/conversations/${id}`, { method: 'DELETE' }) }
   getMessages(id) { return this.request(`/api/conversations/${id}/messages`) }
+  getCapabilities(id) { return this.request(`/api/conversations/${id}/capabilities`) }
+  updateCapabilities(id, enabledTools, enabledSkills) {
+    return this.request(`/api/conversations/${id}/capabilities`, { method: 'PUT', body: JSON.stringify({ enabled_tools: enabledTools, enabled_skills: enabledSkills }) })
+  }
   getRuns(id) { return this.request(`/api/conversations/${id}/runs`) }
   runTask(id, task) { return this.request(`/api/conversations/${id}/runs`, { method: 'POST', body: JSON.stringify({ task }) }) }
   getRun(id) { return this.request(`/api/runs/${id}`) }
   getRunEvents(id) { return this.request(`/api/runs/${id}/events/history`) }
+  getRunCapabilities(id) { return this.request(`/api/runs/${id}/capabilities`) }
   cancelRun(id) { return this.request(`/api/runs/${id}/cancel`, { method: 'POST' }) }
   getFileTree(id, path = '.', depth = 8) {
     const query = new URLSearchParams({ path, depth: String(depth) })

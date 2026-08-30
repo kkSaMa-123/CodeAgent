@@ -4,6 +4,7 @@ import { apiClient } from '../api/client'
 
 export const EVENT_TYPES = [
   'state.changed', 'model.started', 'model.retrying', 'model.completed', 'model.error',
+  'model.reasoning.delta',
   'tool.started', 'tool.completed', 'tool.repeated', 'approval.requested',
   'approval.resolved', 'files.changed', 'task.completed', 'task.failed', 'task.cancelled',
 ]
@@ -56,6 +57,21 @@ export function groupToolEvents(events = []) {
   return [...groups.values()]
 }
 
+export function buildReasoningText(events = []) {
+  let content = ''
+  let separateNextDelta = false
+  for (const event of events) {
+    if (event.event_type === 'model.started' && content) separateNextDelta = true
+    if (event.event_type !== 'model.reasoning.delta') continue
+    const delta = event.payload?.content
+    if (typeof delta !== 'string' || !delta) continue
+    if (separateNextDelta) content += '\n\n'
+    content += delta
+    separateNextDelta = false
+  }
+  return content.slice(0, 30_000)
+}
+
 export const useEventStore = defineStore('events', {
   state: () => ({
     runId: '', events: [], lastSequence: 0, connectionStatus: 'idle', error: '',
@@ -70,12 +86,15 @@ export const useEventStore = defineStore('events', {
       if (!event) return { phase: 'thinking', label: 'Agent 正在分析任务…', detail: '' }
       if (event.event_type === 'tool.started') return { phase: 'tool', label: `正在${TOOL_ACTIONS[event.payload?.name] || `调用 ${event.payload?.name || '工具'}`}…`, detail: event.payload?.path || event.payload?.query || event.payload?.command || '' }
       if (event.event_type === 'tool.completed' || event.event_type === 'tool.repeated') return { phase: 'thinking', label: 'Agent 正在分析工具结果…', detail: '' }
+      if (event.event_type === 'model.reasoning.delta') return { phase: 'thinking', label: 'Agent 正在思考…', detail: '' }
+      if (event.event_type === 'model.retrying') return { phase: 'reconnecting', label: `模型响应失败，正在进行第 ${event.payload?.attempt || 1} 次重试…`, detail: event.payload?.error_kind || '' }
       if (event.event_type === 'model.started') return { phase: 'thinking', label: 'Agent 正在分析任务…', detail: `第 ${event.payload?.iteration || 1} 轮` }
       if (event.event_type === 'model.completed') return { phase: 'planning', label: 'Agent 正在准备下一步操作…', detail: '' }
       if (event.event_type === 'approval.requested') return { phase: 'approval', label: '等待你确认命令', detail: '' }
       return { phase: 'preparing', label: '正在准备任务…', detail: '' }
     },
     groupedToolTraces: (state) => groupToolEvents(state.events),
+    reasoningText: (state) => buildReasoningText(state.events),
   },
   actions: {
     reset(runId) {

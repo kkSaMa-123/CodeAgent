@@ -20,7 +20,7 @@ from app.providers.types import ChatMessage
 @dataclass(frozen=True, slots=True)
 class RuntimeLimits:
     max_iterations: int = 20
-    task_timeout_seconds: float = 300.0
+    task_timeout_seconds: float = 900.0
     max_tool_output_chars: int = 20_000
     max_event_output_chars: int = 8_000
     context_budget_chars: int = 120_000

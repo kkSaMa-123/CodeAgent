@@ -13,6 +13,9 @@ cd frontend && npm install
 
 编辑根目录 `.env`，至少填写 `LLM_PROVIDER`、`LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL`。API Key 不需要额外引号；值包含空格或 `#` 时可使用引号。
 
+Agent 单轮任务默认最多运行 900 秒。复杂任务可以在 `.env` 中通过
+`CODEAGENT_TASK_TIMEOUT_SECONDS` 调整，允许范围为 60～7200 秒；修改后需要重启后端。
+
 启动后端：
 
 ```bash
@@ -45,6 +48,51 @@ npm run dev -- --host 127.0.0.1
 - 当前工作区文件版本。
 
 后续任务再次修改同一文件不会覆盖旧运行的 Diff。二进制和超限文件只保存路径、大小和哈希，不保存完整内容。
+
+## 实时思考与运行过程
+
+模型支持思考流时，当前轮会在对话中实时展示可折叠的“Agent 思考过程”；工具开始后会继续展示正在读取、写入、修改或运行的具体操作。历史思考默认折叠并可重新展开。展示内容会经过凭据脱敏，单轮最多保留 30000 个字符。
+
+DeepSeek thinking 模式可通过 `.env` 显式开启：
+
+```env
+LLM_EXTRA_BODY_JSON={"thinking":{"type":"enabled"}}
+```
+
+不返回 `reasoning_content` 的 OpenAI-compatible 服务会自动退化为阶段状态和工具轨迹，不影响 Agent 正常执行。
+
+## 工具管理
+
+当前对话标题右侧的“工具”按钮会在右侧打开该对话的能力设置。对话内容和标题保持可见，因此可以明确配置作用于哪个对话。七个内置工具按只读、文件修改和命令执行分组，可以逐项开启或关闭：
+
+- 关闭的工具不会发送给模型，模型即使伪造对应 Tool Call，后端也会以 `unknown_tool` 拒绝执行。
+- 关闭全部工具后进入“仅聊天模式”，Agent 仍能回答问题，但不能读取或改动项目，也不能执行命令。
+- 每次 Run 创建时都会冻结当轮工具与 Skill 配置。后续调整不会改变历史记录；运行期间不能修改当前对话的能力。
+- `run_command` 仍经过原有风险分级和对话内审批，工具开关不会绕过路径边界、参数校验或命令审批。
+
+## Skill 配置
+
+当前对话标题右侧的“Skill”按钮会在右侧打开工作流配置。添加时填写包含 `SKILL.md` 的文件夹绝对路径；注册仅保存元数据和指令内容，不执行目录中的脚本，也不会删除原目录。仓库内提供了默认不启用的 `skills/cpp-problem-solver` 示例。
+
+`SKILL.md` 使用受限 YAML front matter：
+
+```markdown
+---
+name: cpp-problem-solver
+description: 完成 C++ 算法题并编译验证
+version: 1.0.0
+required_tools:
+  - read_file
+  - write_file
+  - run_command
+recommended_tools:
+  - search_text
+---
+
+先读取题意和现有代码，再实现解法并执行编译测试。
+```
+
+启用 Skill 时会自动开启其必需工具；必需工具仍被 Skill 使用时不能单独关闭。系统只读取 Skill 根目录中的普通 `SKILL.md`，拒绝符号链接、未知字段、未知工具和超限内容。Skill 正文只进入冻结后的模型系统提示，不会出现在公开能力事件中。
 
 ## 持久化与重启
 

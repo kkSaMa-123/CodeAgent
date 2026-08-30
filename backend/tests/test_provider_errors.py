@@ -13,6 +13,21 @@ from app.providers import OpenAICompatibleProvider, ProviderError, ProviderError
 from app.providers.redaction import REDACTED, SecretRedactor
 
 
+class AsyncStream:
+    def __init__(self, chunk: object) -> None:
+        self._chunk = chunk
+
+    def __aiter__(self):
+        self._done = False
+        return self
+
+    async def __anext__(self):
+        if self._done:
+            raise StopAsyncIteration
+        self._done = True
+        return self._chunk
+
+
 def make_settings(monkeypatch: pytest.MonkeyPatch, *, max_retries: int = 2) -> ModelSettings:
     values = {
         "LLM_PROVIDER": "test-provider",
@@ -28,17 +43,17 @@ def make_settings(monkeypatch: pytest.MonkeyPatch, *, max_retries: int = 2) -> M
     return ModelSettings(_env_file=None)
 
 
-def make_response(content: str = "done") -> SimpleNamespace:
-    message = SimpleNamespace(
+def make_response(content: str = "done") -> AsyncStream:
+    delta = SimpleNamespace(
         content=content,
         tool_calls=[],
         reasoning_content=None,
         model_extra=None,
     )
-    return SimpleNamespace(
-        choices=[SimpleNamespace(message=message, finish_reason="stop")],
+    return AsyncStream(SimpleNamespace(
+        choices=[SimpleNamespace(delta=delta, finish_reason="stop")],
         usage=None,
-    )
+    ))
 
 
 def make_client(*side_effects: object) -> tuple[SimpleNamespace, AsyncMock]:

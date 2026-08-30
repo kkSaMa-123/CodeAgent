@@ -1,10 +1,13 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { highlightCode } from '../utils/highlight'
 
 const props = defineProps({ workspace: { type: Object, required: true }, diffStore: { type: Object, required: true }, selectedChange: { type: Object, default: null } })
 const view = ref('current')
 const content = computed(() => view.value === 'history' ? props.diffStore.preview : props.workspace.fileContent?.content || '')
 const contentLines = computed(() => content.value.split('\n'))
+const contentPath = computed(() => view.value === 'history' ? props.selectedChange?.path || '' : props.workspace.currentFile || props.selectedChange?.path || '')
+const highlightedContent = computed(() => highlightCode(content.value, contentPath.value))
 const diffLines = computed(() => {
   let previousNewEnd = 0
   const result = []
@@ -41,7 +44,10 @@ defineExpose({ select })
       </div>
       <div v-else-if="!content && !selectedChange && !workspace.currentFile" class="center-state"><span class="file-glyph">{ }</span><strong>选择文件或历史修改</strong><span>可以预览当前文件、本轮结束版本和冻结 Diff。</span></div>
       <div v-else-if="view === 'history' && diffStore.previewKind !== 'text'" class="center-state"><strong>历史内容不可预览</strong><span>{{ diffStore.previewKind === 'binary' ? '二进制文件' : '文件超过历史预览上限' }}</span></div>
-      <pre v-else class="code-view"><code><span v-for="(line, index) in contentLines" :key="index" class="code-line"><span class="line-number">{{ index + 1 }}</span><span class="line-content">{{ line || ' ' }}</span></span></code></pre>
+      <div v-else class="code-view">
+        <pre class="line-numbers" aria-hidden="true"><span v-for="(_, index) in contentLines" :key="index">{{ index + 1 }}</span></pre>
+        <pre class="code-source"><code class="hljs" v-html="highlightedContent" /></pre>
+      </div>
     </div>
   </section>
 </template>

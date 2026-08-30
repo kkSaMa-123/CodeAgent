@@ -86,6 +86,24 @@ class ModelSettings(BaseSettings):
         }
 
 
+class RuntimeSettings(BaseSettings):
+    """Agent 单轮任务的本地运行限制。"""
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    task_timeout_seconds: float = Field(
+        default=900.0,
+        validation_alias="CODEAGENT_TASK_TIMEOUT_SECONDS",
+        ge=60,
+        le=7_200,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ModelConfigurationStatus:
     """不包含凭据的配置就绪状态。"""
@@ -100,6 +118,12 @@ def load_model_settings(*, env_file: Path | None = ENV_FILE) -> ModelSettings:
 
     # pydantic-settings 在运行时从环境变量提供必填字段，mypy 无法推断该动态来源。
     return ModelSettings(_env_file=env_file)  # type: ignore[call-arg]
+
+
+def load_runtime_settings(*, env_file: Path | None = ENV_FILE) -> RuntimeSettings:
+    """读取 Agent 总任务时长；默认 15 分钟，可在本地环境变量中覆盖。"""
+
+    return RuntimeSettings(_env_file=env_file)  # type: ignore[call-arg]
 
 
 def inspect_model_configuration(*, env_file: Path | None = ENV_FILE) -> ModelConfigurationStatus:

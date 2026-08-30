@@ -17,19 +17,27 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent.change_tracker import RunChangeTracker
 from app.agent.context import ConversationContext
-from app.agent.runtime import AgentRuntime
+from app.agent.runtime import AgentRuntime, RuntimeLimits
 from app.agent.state import EventBuffer, RunState, SessionStatus, TerminationReason
-from app.config import database_path, inspect_model_configuration, load_model_settings
+from app.capabilities import TOOL_CATALOG, CapabilitySnapshot, compose_system_prompt
+from app.config import (
+    database_path,
+    inspect_model_configuration,
+    load_model_settings,
+    load_runtime_settings,
+)
 from app.persistence import (
     ConflictError,
     NotFoundError,
     SQLiteRepository,
     public_dict,
 )
+from app.providers.errors import RetryEvent
 from app.providers.openai_compatible import OpenAICompatibleProvider
 from app.providers.redaction import SecretRedactor
 from app.safety.approval import ApprovalError, ApprovalService
 from app.services import WorkspaceFileService
+from app.skills import load_skill
 from app.tools.base import ToolContext
 from app.tools.defaults import build_file_tool_registry
 from app.tools.git_tools import GitDiffArguments, GitDiffTool
@@ -72,16 +80,61 @@ class ApprovalRequest(StrictModel):
     approved: bool
 
 
+class CapabilityRequest(StrictModel):
+    enabled_tools: list[str]
+    enabled_skills: list[str]
+
+
+class SkillRequest(StrictModel):
+    path: str = Field(min_length=1)
+
+
 def _default_runtime_factory(approval_service: ApprovalService) -> RuntimeFactory:
     def factory(state: RunState) -> AgentRuntime:
         settings = load_model_settings()
+        runtime_settings = load_runtime_settings()
         redactor = SecretRedactor([settings.api_key.get_secret_value()])
+        snapshot = state.capabilities or CapabilitySnapshot(())
+        reasoning_published = 0
+
+        def publish_retry(event: RetryEvent) -> None:
+            state.publish(
+                "model.retrying",
+                {
+                    "attempt": event.attempt,
+                    "max_retries": event.max_retries,
+                    "error_kind": event.error_kind.value,
+                    "delay_seconds": event.delay_seconds,
+                },
+            )
+
+        def publish_reasoning(content: str) -> None:
+            nonlocal reasoning_published
+            if reasoning_published >= 30_000:
+                return
+            visible = content[: 30_000 - reasoning_published]
+            reasoning_published += len(visible)
+            if visible:
+                state.publish("model.reasoning.delta", {"content": visible})
+
         return AgentRuntime(
-            OpenAICompatibleProvider(settings),
-            build_file_tool_registry(approval_service=approval_service, redactor=redactor),
-            system_prompt=(
+            OpenAICompatibleProvider(
+                settings,
+                on_retry=publish_retry,
+                on_reasoning_delta=publish_reasoning,
+            ),
+            build_file_tool_registry(
+                approval_service=approval_service,
+                redactor=redactor,
+                enabled_tools=snapshot.enabled_tools,
+            ),
+            system_prompt=compose_system_prompt(
                 "你是本地 Coding Agent。先读取必要上下文，使用工具完成修改，并主动运行相关测试。"
-                "所有工具路径必须相对于工作区。"
+                "所有工具路径必须相对于工作区；不得泄露凭据；危险命令必须经过审批。",
+                snapshot,
+            ),
+            limits=RuntimeLimits(
+                task_timeout_seconds=runtime_settings.task_timeout_seconds,
             ),
         )
 
@@ -119,6 +172,7 @@ class AppServices:
             history = self.repository.semantic_messages(
                 run["conversation_id"], exclude_run_id=run_id
             )
+            capabilities = self.repository.get_run_capabilities(run_id, include_instructions=True)
             state = RunState(
                 session_id=run_id,
                 project_id=run["project_id"],
@@ -126,7 +180,9 @@ class AppServices:
                 workspace=Path(run["workspace"]),
                 messages=list(ConversationContext().build(history)),
                 events=EventBuffer(session_id=run_id, on_publish=self.repository.append_event),
+                capabilities=capabilities,
             )
+            state.publish("run.capabilities", capabilities.public_dict())
             self._states[run_id] = state
             self._tasks[run_id] = asyncio.create_task(self._run(state, task_text))
             return state
@@ -228,7 +284,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=list(allowed_origins),
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Last-Event-ID"],
     )
 
@@ -240,6 +296,44 @@ def create_app(
     async def config_status() -> dict[str, Any]:
         status = container.config_inspector()
         return {"ready": status.ready, "summary": status.summary, "errors": status.errors}
+
+    @app.get("/api/capabilities/tools")
+    async def tool_catalog() -> list[dict[str, str | bool]]:
+        return [dict(item) for item in TOOL_CATALOG]
+
+    @app.get("/api/skills")
+    async def skills() -> list[dict[str, Any]]:
+        return container.repository.list_skills()
+
+    @app.post("/api/skills", status_code=201)
+    async def register_skill(body: SkillRequest) -> dict[str, Any]:
+        try:
+            return container.repository.register_skill(load_skill(body.path))
+        except (OSError, ValueError, ConflictError) as exc:
+            raise _repo_http_error(exc) from exc
+
+    @app.get("/api/skills/{skill_id}")
+    async def skill_detail(skill_id: str) -> dict[str, Any]:
+        try:
+            return container.repository.get_skill(skill_id, include_instructions=True)
+        except NotFoundError as exc:
+            raise _repo_http_error(exc) from exc
+
+    @app.patch("/api/skills/{skill_id}")
+    async def refresh_skill(skill_id: str) -> dict[str, Any]:
+        try:
+            current = container.repository.get_skill(skill_id)
+            return container.repository.register_skill(load_skill(current["path"]))
+        except (OSError, ValueError, NotFoundError, ConflictError) as exc:
+            raise _repo_http_error(exc) from exc
+
+    @app.delete("/api/skills/{skill_id}", status_code=204)
+    async def delete_skill(skill_id: str) -> Response:
+        try:
+            container.repository.delete_skill(skill_id)
+        except (NotFoundError, ConflictError) as exc:
+            raise _repo_http_error(exc) from exc
+        return Response(status_code=204)
 
     @app.post("/api/workspaces/validate")
     async def workspace_validate(body: WorkspaceRequest) -> dict[str, Any]:
@@ -324,6 +418,24 @@ def create_app(
         except NotFoundError as exc:
             raise _repo_http_error(exc) from exc
 
+    @app.get("/api/conversations/{conversation_id}/capabilities")
+    async def conversation_capabilities(conversation_id: str) -> dict[str, Any]:
+        try:
+            return container.repository.get_conversation_capabilities(conversation_id)
+        except NotFoundError as exc:
+            raise _repo_http_error(exc) from exc
+
+    @app.put("/api/conversations/{conversation_id}/capabilities")
+    async def update_conversation_capabilities(
+        conversation_id: str, body: CapabilityRequest
+    ) -> dict[str, Any]:
+        try:
+            return container.repository.set_conversation_capabilities(
+                conversation_id, body.enabled_tools, body.enabled_skills
+            )
+        except (NotFoundError, ConflictError, ValueError) as exc:
+            raise _repo_http_error(exc) from exc
+
     @app.get("/api/conversations/{conversation_id}/runs")
     async def runs(conversation_id: str) -> list[dict[str, Any]]:
         try:
@@ -349,6 +461,13 @@ def create_app(
     async def run_snapshot(run_id: str) -> dict[str, Any]:
         try:
             return _run_snapshot(container.repository.get_run(run_id), container.state(run_id))
+        except NotFoundError as exc:
+            raise _repo_http_error(exc) from exc
+
+    @app.get("/api/runs/{run_id}/capabilities")
+    async def run_capabilities(run_id: str) -> dict[str, Any]:
+        try:
+            return container.repository.get_run_capabilities(run_id).public_dict()
         except NotFoundError as exc:
             raise _repo_http_error(exc) from exc
 
@@ -495,8 +614,7 @@ def create_app(
     async def run_event_history(run_id: str) -> list[dict[str, Any]]:
         try:
             return [
-                {"run_id": run_id, **event}
-                for event in container.repository.list_events(run_id)
+                {"run_id": run_id, **event} for event in container.repository.list_events(run_id)
             ]
         except NotFoundError as exc:
             raise _repo_http_error(exc) from exc

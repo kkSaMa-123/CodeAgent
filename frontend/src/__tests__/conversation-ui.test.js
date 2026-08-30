@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import ApprovalCard from '../components/ApprovalCard.vue'
 import AgentActivityCard from '../components/AgentActivityCard.vue'
+import AppHeader from '../components/AppHeader.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import EditorPanel from '../components/EditorPanel.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
@@ -19,6 +20,8 @@ describe('Codex 风格项目与对话界面', () => {
     expect(wrapper.text()).toContain('CodeAgent'); expect(wrapper.text()).toContain('对话一'); expect(wrapper.text()).toContain('/repo')
     await wrapper.find('[title="从 CodeAgent 移除"]').trigger('click')
     expect(confirm.mock.calls[0][0]).toContain('不会删除本地文件')
+    await wrapper.find('[aria-label="收起项目栏"]').trigger('click')
+    expect(wrapper.find('[aria-label="展开项目栏"]').text()).toBe('☰')
   })
 
   it('左侧根据相对路径正确展示文件名、层级和大小', async () => {
@@ -53,6 +56,44 @@ describe('Codex 风格项目与对话界面', () => {
     expect(wrapper.find('.run-turn').element.lastElementChild.classList).toContain('final-answer')
   })
 
+  it('运行中立即显示用户任务、当前工具和中文超时原因', () => {
+    const active = mount(ChatPanel, { props: {
+      conversations: { current: { title: '贪吃蛇' }, currentId: 'c1', runs: [{ id: 'r-live', status: 'running' }], messages: [], changesByRun: {}, error: '' },
+      run: { runId: 'r-live', pendingTask: '实现贪吃蛇', status: 'running', isActive: true, startedAt: Date.now(), error: '', cancel: vi.fn() },
+      eventStore: { runId: 'r-live', reasoningText: '先检查项目结构，再创建游戏逻辑。', groupedToolTraces: [{ name: 'write_file', status: 'running', count: 1, successCount: 0, errorCount: 0, traces: [{ id: 'tool-1', status: 'running', events: [{ event_type: 'tool.started', payload: { path: 'src/game.cpp' } }] }] }], activity: { phase: 'tool', label: '正在写入文件…', detail: 'src/game.cpp' }, error: '' },
+      approval: { pending: null, error: '', loading: false },
+    } })
+    expect(active.text()).toContain('实现贪吃蛇')
+    expect(active.text()).toContain('正在写入文件')
+    expect(active.text()).toContain('Agent 思考过程')
+    expect(active.text()).toContain('先检查项目结构')
+
+    const failed = mount(ChatPanel, { props: {
+      conversations: { current: { title: '超时任务' }, currentId: 'c1', runs: [{ id: 'r-timeout', status: 'failed', termination_reason: 'task_timeout' }], messages: [], changesByRun: {}, error: '' },
+      run: { status: 'failed', isActive: false, error: '', cancel: vi.fn() },
+      eventStore: { runId: '', groupedToolTraces: [], error: '' },
+      approval: { pending: null, error: '', loading: false },
+    } })
+    expect(failed.text()).toContain('任务超过最大运行时长')
+    expect(failed.text()).not.toContain('task_timeout')
+  })
+
+  it('在当前对话标题右侧打开工具和 Skill 配置', async () => {
+    const wrapper = mount(ChatPanel, { props: {
+      conversations: { current: { title: '当前修复对话' }, currentId: 'c1', runs: [], messages: [], changesByRun: {}, refresh: vi.fn(), error: '' },
+      run: { status: 'idle', isActive: false, error: '', cancel: vi.fn() },
+      eventStore: { runId: '', groupedToolTraces: [], error: '' },
+      approval: { pending: null, error: '', loading: false },
+      rightPanel: 'tools',
+    } })
+    expect(wrapper.find('.panel-heading h2').text()).toBe('当前修复对话')
+    const buttons = wrapper.findAll('.conversation-capabilities button')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0].classes()).toContain('active')
+    await buttons[1].trigger('click')
+    expect(wrapper.emitted('show-capabilities')[0]).toEqual(['skills'])
+  })
+
   it('命令确认作为对话内卡片展示，并支持允许、拒绝和停止', async () => {
     const store = { pending: { command: 'npm install', workspace: '/repo', reason: '命令会修改依赖。' }, error: '', loading: false, resolve: vi.fn(), cancel: vi.fn() }
     const runStore = { cancel: vi.fn() }
@@ -70,17 +111,18 @@ describe('Codex 风格项目与对话界面', () => {
     expect(store.resolve).toHaveBeenNthCalledWith(2, true, runStore)
   })
 
-  it('相同命令压缩为中文单行，并可展开失败详情与耗时', async () => {
+  it('相同命令压缩为中文单行，并可展开失败详情但不展示耗时', async () => {
     const wrapper = mount(ToolActivityLine, { props: { group: {
       name: 'run_command', status: 'error', count: 2, successCount: 1, errorCount: 1, durationSeconds: 0.42,
       traces: [{ id: 'call-1', status: 'error', summary: '命令以退出码 1 结束', command: 'g++ main.cpp', details: { command: 'g++ main.cpp', stderr: 'main.cpp: error' }, durationSeconds: 0.12 }],
     } } })
     expect(wrapper.text()).toContain('运行了 2 条命令')
     expect(wrapper.text()).toContain('1 次失败')
-    expect(wrapper.text()).toContain('0.42 秒')
+    expect(wrapper.text()).not.toContain('0.42 秒')
     await wrapper.find('.tool-activity-summary').trigger('click')
     expect(wrapper.text()).toContain('g++ main.cpp')
     expect(wrapper.text()).toContain('main.cpp: error')
+    expect(wrapper.text()).not.toContain('0.12 秒')
   })
 
   it('运行期间在对话内展示当前阶段和停止入口', async () => {
@@ -102,7 +144,32 @@ describe('Codex 风格项目与对话界面', () => {
     expect(wrapper.find('h1').text()).toBe('结果')
     expect(wrapper.find('strong').text()).toBe('完成')
     expect(wrapper.find('pre code').text()).toContain('const ok = true')
+    expect(wrapper.find('pre code .hljs-keyword').text()).toBe('const')
     expect(wrapper.find('script').exists()).toBe(false)
+  })
+
+  it('文件代码按扩展名高亮，行号与可复制源码分离', () => {
+    const wrapper = mount(EditorPanel, { props: {
+      workspace: { currentFile: 'app.js', fileContent: { content: 'const answer = 42\nconsole.log(answer)' }, fileLoading: false, fileError: '' },
+      diffStore: { diff: '', preview: '', previewKind: 'text', lines: [], loading: false, error: '' },
+      selectedChange: null,
+    } })
+    expect(wrapper.find('.code-source .hljs-keyword').text()).toBe('const')
+    expect(wrapper.find('.line-numbers').attributes('aria-hidden')).toBe('true')
+    expect(wrapper.find('.line-numbers').text()).toContain('1')
+    expect(wrapper.find('.code-source').text()).toBe('const answer = 42\nconsole.log(answer)')
+    expect(wrapper.find('.code-source').text()).not.toContain('1const')
+  })
+
+  it('顶栏在模型状态旁提供有语义的主题切换按钮', async () => {
+    const wrapper = mount(AppHeader, { props: {
+      store: { loading: false, ready: true, summary: { provider: 'deepseek', model: 'test' }, load: vi.fn() },
+      theme: 'dark',
+    } })
+    const button = wrapper.get('[aria-label="切换到亮色主题"]')
+    expect(button.text()).toContain('☀')
+    await button.trigger('click')
+    expect(wrapper.emitted('toggle-theme')).toHaveLength(1)
   })
 
   it('右侧可切换本轮 Diff、历史版本和当前文件', async () => {
