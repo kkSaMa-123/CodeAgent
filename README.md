@@ -2,6 +2,29 @@
 
 CodeAgent 是一个本地 Web Coding Agent。前端使用 Vue 3，后端使用 FastAPI；模型通过 OpenAI-compatible API 调用，默认配置示例为 DeepSeek。所有模型地址、模型名和 API Key 都由环境变量提供，代码中不包含凭据。
 
+> 本项目未使用 LangChain、LlamaIndex、OpenAI Agents SDK、AutoGen 等 Agent 框架。对话历史与上下文管理、Tool Call 解析、本地工具执行、Agent 循环、终止条件、错误处理和运行记录均由项目自行实现。
+
+## 核心架构
+
+| 层次 | 技术与职责 |
+| --- | --- |
+| 前端 | Vue 3、Vite、Pinia、Vue Router，负责对话、项目、事件流和 Diff 界面 |
+| API | FastAPI，提供项目、对话、Run、工具、Skill、文件及 SSE 接口 |
+| Agent 运行时 | 负责上下文组装、模型调用、工具循环、取消、超时和终止条件 |
+| 模型适配 | OpenAI-compatible Chat Completions API，默认使用 DeepSeek 配置示例 |
+| 存储 | SQLite，保存对话历史、运行状态、事件和文件版本 |
+
+```text
+用户任务
+  → 加载对话历史与当轮能力快照
+  → 调用模型并解析流式输出
+  → 校验并执行 Tool Calls
+  → 将工具结果追加到上下文
+  → 继续迭代，直到最终回答或命中终止条件
+```
+
+Agent 支持正常完成、用户取消、总任务超时、模型错误、最大迭代数、无进展重复工具调用和服务重启等终止情况。
+
 ## 安装与启动
 
 ```bash
@@ -72,7 +95,7 @@ LLM_EXTRA_BODY_JSON={"thinking":{"type":"enabled"}}
 
 ## Skill 配置
 
-当前对话标题右侧的“Skill”按钮会在右侧打开工作流配置。添加时填写包含 `SKILL.md` 的文件夹绝对路径；注册仅保存元数据和指令内容，不执行目录中的脚本，也不会删除原目录。仓库内提供了默认不启用的 `skills/cpp-problem-solver` 示例。
+当前对话标题右侧的“Skill”按钮会在右侧打开工作流配置。添加时填写包含 `SKILL.md` 的本地文件夹绝对路径；注册仅保存元数据和指令内容，不执行目录中的脚本，也不会删除原目录。Skill 是用户本地管理的配置，不随本仓库分发。
 
 `SKILL.md` 使用受限 YAML front matter：
 
@@ -115,3 +138,13 @@ cd frontend && npm test -- --run && npm run build
 RUN_LIVE_LLM_TESTS=1 backend/.venv/bin/python -m pytest \
   -c backend/pyproject.toml backend/tests/live/test_deepseek_provider.py
 ```
+
+当前测试基线为后端 144 项、前端 30 项，并通过 Ruff、Mypy 和前端生产构建。
+
+## 安全与设计边界
+
+- 文件工具只接受工作区相对路径，拒绝绝对路径、`..` 和解析后越界的符号链接。
+- 工具参数通过 JSON Schema 校验，未启用或未注册工具不会执行。
+- Shell 命令分为自动允许、需要审批和直接禁止三档，支持超时、取消和进程组终止。
+- API Key、本地 `.env`、SQLite 数据库与运行数据均已被 Git 忽略。
+- 本项目定位为本地单用户工作台；命令规则与审批机制不等价于完整的操作系统沙箱。

@@ -229,9 +229,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .diff-line.collapsed { color: #60777f; background: rgb(28 48 55 / 30%); font-style: italic; }
 .diff-line.meta { color: #d2bb79; }
 
-.status-badge { padding: 4px 7px; border: 1px solid #34484e; border-radius: 99px; color: #9aafb6; background: #111e22; font: 9px/1 ui-monospace, monospace; text-transform: uppercase; }
-.status-badge[data-status="running"], .status-badge[data-status="queued"] { border-color: #376d61; color: var(--accent-strong); }
-.status-badge[data-status="failed"], .status-badge[data-status="cancelled"] { border-color: #693a3a; color: #ffaaa3; }
 .messages { min-height: 0; flex: 1; padding: 14px; overflow: auto; }
 .agent-intro { display: flex; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 9px; background: #0f1c20; }
 .agent-avatar { width: 27px; height: 27px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 7px; color: #082018; background: var(--accent); font: 800 11px/1 ui-monospace, monospace; }
@@ -425,7 +422,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 [data-theme="light"] .diff-line.collapsed { color: #707069; background: #f1f1ed; }
 [data-theme="light"] .change-meta { color: #6e6e68; }
 [data-theme="light"] .change-meta span { color: #126b5c; background: #e4f3ed; }
-[data-theme="light"] .status-badge { border-color: #d5d5cf; color: #666660; background: #f5f5f1; }
 [data-theme="light"] .messages { background: #fff; }
 [data-theme="light"] .message, [data-theme="light"] .agent-intro { border-color: #e2e2dc; color: #30302d; background: #f7f7f4; }
 [data-theme="light"] .message.user { border-color: #b9d9cf; background: #eaf6f2; }

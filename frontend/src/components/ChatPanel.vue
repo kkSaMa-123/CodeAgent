@@ -45,7 +45,7 @@ watch(
 
 <template>
   <section class="panel chat-panel">
-    <div class="panel-heading"><div><p class="kicker">Conversation</p><h2>{{ conversations.current?.title || '选择一个对话' }}</h2></div><div class="conversation-capabilities"><button type="button" :class="{ active: rightPanel === 'tools' }" :disabled="!conversations.currentId" @click="emit('show-capabilities', 'tools')">工具</button><button type="button" :class="{ active: rightPanel === 'skills' }" :disabled="!conversations.currentId" @click="emit('show-capabilities', 'skills')">Skill</button><span class="status-badge" :data-status="run.status">{{ run.status }}</span></div></div>
+    <div class="panel-heading"><div><p class="kicker">Conversation</p><h2>{{ conversations.current?.title || '选择一个对话' }}</h2></div><div class="conversation-capabilities"><button type="button" :class="{ active: rightPanel === 'tools' }" :disabled="!conversations.currentId" @click="emit('show-capabilities', 'tools')">工具</button><button type="button" :class="{ active: rightPanel === 'skills' }" :disabled="!conversations.currentId" @click="emit('show-capabilities', 'skills')">Skill</button></div></div>
     <div ref="messagesElement" class="messages" aria-live="polite" @scroll.passive="trackScroll">
       <div v-if="!conversations.currentId" class="agent-intro"><span class="agent-avatar">A</span><div><strong>选择或新建对话</strong><p>每个对话拥有独立上下文，可以连续进行多轮任务。</p></div></div>
       <article v-for="item in conversations.runs" :key="item.id" class="run-turn">
